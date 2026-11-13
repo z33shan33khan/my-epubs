@@ -24,6 +24,7 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
+      z-index: 10;
     }
     header h1 { font-size: 1.25rem; font-weight: 600; }
     header .back-btn {
@@ -33,6 +34,7 @@
       font-size: 1rem;
       cursor: pointer;
       color: #0071e3;
+      font-weight: 500;
     }
 
     /* ---------- Library view ---------- */
@@ -43,8 +45,8 @@
     }
     .book-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-      gap: 1.5rem;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 2rem;
       max-width: 1200px;
       margin: 0 auto;
     }
@@ -52,29 +54,33 @@
       background: #fff;
       border-radius: 12px;
       padding: 1rem;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
       cursor: pointer;
-      transition: transform 0.15s, box-shadow 0.15s;
+      transition: transform 0.2s, box-shadow 0.2s;
       text-align: center;
     }
     .book-card:hover {
-      transform: translateY(-3px);
-      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      transform: translateY(-5px);
+      box-shadow: 0 8px 20px rgba(0,0,0,0.12);
     }
     .book-card .cover {
       width: 100%;
       aspect-ratio: 2/3;
       object-fit: cover;
-      border-radius: 6px;
+      border-radius: 8px;
       background: #e8e8ed;
-      margin-bottom: 0.75rem;
+      margin-bottom: 1rem;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
     }
     .book-card .title {
-      font-size: 0.9rem;
-      font-weight: 500;
-      white-space: nowrap;
+      font-size: 1rem;
+      font-weight: 600;
+      line-height: 1.3;
+      color: #1d1d1f;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
       overflow: hidden;
-      text-overflow: ellipsis;
     }
 
     /* ---------- Reader view ---------- */
@@ -90,20 +96,24 @@
     }
     #reader-controls {
       background: #fff;
-      padding: 0.5rem 1rem;
+      padding: 0.75rem 1.5rem;
       display: flex;
-      gap: 0.5rem;
+      gap: 1rem;
       border-top: 1px solid #e8e8ed;
+      align-items: center;
     }
     #reader-controls button {
       background: #0071e3;
       color: #fff;
       border: none;
-      padding: 0.5rem 1rem;
+      padding: 0.6rem 1.2rem;
       border-radius: 8px;
       cursor: pointer;
-      font-size: 0.9rem;
+      font-size: 0.95rem;
+      font-weight: 500;
+      transition: background 0.2s;
     }
+    #reader-controls button:hover:not(:disabled) { background: #0062c4; }
     #reader-controls button:disabled {
       background: #b0b0b5;
       cursor: default;
@@ -112,8 +122,9 @@
 
     #loading {
       text-align: center;
-      padding: 3rem;
+      padding: 4rem;
       color: #86868b;
+      font-size: 1.1rem;
     }
   </style>
 </head>
@@ -121,7 +132,7 @@
 
   <header>
     <h1 id="header-title">📚 My EPUB Collection</h1>
-    <button class="back-btn" id="back-btn" onclick="showLibrary()">← Library</button>
+    <button class="back-btn" id="back-btn" onclick="showLibrary()">← Back to Library</button>
   </header>
 
   <!-- Library view -->
@@ -143,32 +154,52 @@
 
   <script>
     // ============================================================
-    // 1. DEFINE YOUR BOOKS HERE
+    // 1. COVER GENERATOR (Creates beautiful covers automatically)
     // ============================================================
-    // Upload your .epub files to the same folder as this index.html
-    // (or a subfolder like "books/"), then list them below.
-    //
-    // Example:
-    //   { title: "The Great Gatsby", file: "books/gatsby.epub" }
-    //
-    // You can also add an optional "cover" property with a path to
-    // a cover image if the EPUB doesn't have one embedded:
-    //   { title: "My Book", file: "books/my-book.epub", cover: "covers/my-book.jpg" }
-    // ============================================================
+    function generateCover(line1, line2, color1, color2) {
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="600">
+        <defs>
+          <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="${color1}" />
+            <stop offset="100%" stop-color="${color2}" />
+          </linearGradient>
+        </defs>
+        <rect width="400" height="600" fill="url(#grad)" />
+        <text x="200" y="270" font-family="system-ui, sans-serif" font-size="34" font-weight="bold" fill="#ffffff" text-anchor="middle">${line1}</text>
+        <text x="200" y="320" font-family="system-ui, sans-serif" font-size="34" font-weight="bold" fill="#ffffff" text-anchor="middle">${line2}</text>
+        <line x1="80" y1="350" x2="320" y2="350" stroke="#ffffff" stroke-width="2" opacity="0.4" />
+      </svg>`;
+      return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+    }
 
+    // ============================================================
+    // 2. YOUR BOOK LIST
+    // ============================================================
     const BOOKS = [
-      // 👇 REPLACE THESE WITH YOUR OWN FILES 👇
       {
-        title: "Sample Book (replace me)",
-        file: "books/sample.epub"
+        title: "Absolute Resonance",
+        file: "books/Absolute%20Resonance.epub",
+        cover: generateCover("Absolute", "Resonance", "#8E2DE2", "#4A00E0") // Purple/Blue
       },
-      // Add more books like this:
-      // { title: "Book Two", file: "books/book-two.epub" },
-      // { title: "Book Three", file: "books/book-three.epub" },
+      {
+        title: "Catastrophic Necromancer",
+        file: "books/Catastrophic%20necromancer.epub",
+        cover: generateCover("Catastrophic", "Necromancer", "#0f0c29", "#302b63") // Dark Midnight
+      },
+      {
+        title: "The Desolate Era",
+        file: "books/The%20Desolate%20Era.epub",
+        cover: generateCover("The Desolate", "Era", "#200122", "#6f0000") // Deep Red
+      },
+      {
+        title: "I Shall Seal The Heavens",
+        file: "books/I%20Shall%20Seal%20The%20Heavens.epub",
+        cover: generateCover("I Shall Seal", "The Heavens", "#000428", "#004e92") // Starry Night Blue
+      }
     ];
 
     // ============================================================
-    // 2. READER LOGIC (no need to edit below)
+    // 3. READER LOGIC (No need to edit below)
     // ============================================================
 
     let book = null;
@@ -189,11 +220,6 @@
       loadingEl.style.display = 'none';
       bookGrid.innerHTML = '';
 
-      if (BOOKS.length === 0) {
-        bookGrid.innerHTML = '<p style="grid-column:1/-1;text-align:center;color:#86868b;">No books added yet. Edit the <code>BOOKS</code> array in the source.</p>';
-        return;
-      }
-
       BOOKS.forEach((b, index) => {
         const card = document.createElement('div');
         card.className = 'book-card';
@@ -202,14 +228,7 @@
         const cover = document.createElement('img');
         cover.className = 'cover';
         cover.alt = b.title;
-        // If a cover path is provided, use it; otherwise show a placeholder
-        cover.src = b.cover || 'data:image/svg+xml,' + encodeURIComponent(
-          `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="300" fill="#e8e8ed">
-             <rect width="200" height="300" fill="#e8e8ed"/>
-             <text x="100" y="150" text-anchor="middle" fill="#86868b" font-size="14">No Cover</text>
-           </svg>`
-        );
-        cover.onerror = () => { cover.src = cover.src; }; // fallback silently
+        cover.src = b.cover;
 
         const title = document.createElement('div');
         title.className = 'title';
@@ -232,14 +251,8 @@
       headerTitle.textContent = meta.title;
 
       // Clear previous book
-      if (rendition) {
-        rendition.destroy();
-        rendition = null;
-      }
-      if (book) {
-        book.destroy();
-        book = null;
-      }
+      if (rendition) { rendition.destroy(); rendition = null; }
+      if (book) { book.destroy(); book = null; }
       viewerEl.innerHTML = '';
 
       // Load the EPUB
@@ -247,7 +260,7 @@
       rendition = book.renderTo('viewer', {
         width: '100%',
         height: '100%',
-        spread: 'none' // single-page view; use 'auto' for two-page spreads
+        spread: 'none'
       });
 
       await rendition.display();

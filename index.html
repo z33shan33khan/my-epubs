@@ -1588,6 +1588,9 @@
     function updateSpeechHighlightColor(input, preference) {
       saveReaderPreference(preference, input.value);
       updateSpeechHighlightStyles();
+      if (activeSpeechChunk && activeSpeechCharIndex !== null) {
+        highlightSpeechWord(activeSpeechChunk, activeSpeechCharIndex);
+      }
     }
 
     function changeFontSize(delta) {
@@ -2079,12 +2082,8 @@
         document.head.appendChild(style);
       }
       style = document.querySelector('[data-my-epubs-speech-style]');
-      const fallbackColor = speechHighlightMode.value === 'line'
-        ? speechLineColor.value
-        : speechWordColor.value;
       style.textContent =
         '.my-epubs-speech-current-paragraph{background-color:' + speechParagraphColor.value + '!important;outline:1px solid ' + speechParagraphColor.value + ';border-radius:2px}' +
-        '.my-epubs-speech-current-fallback{background-color:' + fallbackColor + '!important;outline:1px solid ' + fallbackColor + ';border-radius:2px}' +
         '::highlight(my-epubs-speech-line){background-color:' + speechLineColor.value + ';color:inherit}' +
         '::highlight(my-epubs-speech-word){background-color:' + speechWordColor.value + ';color:inherit}';
       styledSpeechContents.add(content);
@@ -2096,8 +2095,39 @@
         (!view.CSS.supports || view.CSS.supports('selector(::highlight(my-epubs-speech-word))')));
     }
 
+    function useSpeechRangeOverlays(content) {
+      const view = content.document.defaultView;
+      const coarsePointer = view.matchMedia && view.matchMedia('(pointer: coarse)').matches;
+      return Boolean(coarsePointer || !supportsSpeechRangeHighlights(content));
+    }
+
     function updateSpeechHighlightStyles() {
       styledSpeechContents.forEach(content => ensureSpeechHighlightStyles(content));
+    }
+
+    function drawSpeechRangeOverlay(content, range, color, type) {
+      const document = content.document;
+      const view = document.defaultView;
+      let overlay = document.querySelector('[data-my-epubs-speech-overlays]');
+      if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.setAttribute('data-my-epubs-speech-overlays', '');
+        overlay.style.cssText =
+          'position:absolute;left:0;top:0;width:100%;height:100%;overflow:visible;pointer-events:none;z-index:2147483647';
+        document.body.appendChild(overlay);
+      }
+
+      Array.from(range.getClientRects()).forEach(rect => {
+        if (!rect.width || !rect.height) return;
+        const marker = document.createElement('span');
+        marker.style.cssText =
+          'position:absolute;pointer-events:none;border-radius:2px;background-color:' + color +
+          ';opacity:' + (type === 'line' ? '0.32' : '0.55') +
+          ';left:' + (rect.left + view.scrollX) + 'px' +
+          ';top:' + (rect.top + view.scrollY) + 'px' +
+          ';width:' + rect.width + 'px;height:' + rect.height + 'px';
+        overlay.appendChild(marker);
+      });
     }
 
     function createSpeechRange(segment, start, end, source = false) {
@@ -2140,6 +2170,8 @@
         view.CSS.highlights.delete('my-epubs-speech-line');
         view.CSS.highlights.delete('my-epubs-speech-word');
       }
+      const overlay = content.document.querySelector('[data-my-epubs-speech-overlays]');
+      if (overlay) overlay.replaceChildren();
     }
 
     function highlightSpeechWord(chunk, charIndex) {
@@ -2150,32 +2182,31 @@
       ensureSpeechHighlightStyles(chunk.segment.content);
 
       const view = chunk.segment.content.document.defaultView;
-      if (!view.CSS || !view.CSS.highlights || !view.Highlight) return;
-
       clearSpeechRangeHighlights(chunk.segment.content);
+      const useOverlays = useSpeechRangeOverlays(chunk.segment.content);
       if (speechHighlightMode.value === 'line') {
         const lineRange = getSpeechLineRange(chunk.segment, chunk.start + currentCharIndex);
-        if (lineRange) view.CSS.highlights.set('my-epubs-speech-line', new view.Highlight(lineRange));
+        if (lineRange) {
+          if (useOverlays) drawSpeechRangeOverlay(chunk.segment.content, lineRange, speechLineColor.value, 'line');
+          else view.CSS.highlights.set('my-epubs-speech-line', new view.Highlight(lineRange));
+        }
       }
       const wordRange = getSpeechWordRange(chunk, currentCharIndex);
-      if (wordRange) view.CSS.highlights.set('my-epubs-speech-word', new view.Highlight(wordRange));
+      if (wordRange) {
+        if (useOverlays) drawSpeechRangeOverlay(chunk.segment.content, wordRange, speechWordColor.value, 'word');
+        else view.CSS.highlights.set('my-epubs-speech-word', new view.Highlight(wordRange));
+      }
     }
 
     function highlightSpeechSegment(segment) {
       if (activeSpeechSegment && activeSpeechSegment.element !== segment.element) {
         activeSpeechSegment.element.classList.remove('my-epubs-speech-current-paragraph');
-        activeSpeechSegment.element.classList.remove('my-epubs-speech-current-fallback');
         clearSpeechRangeHighlights(activeSpeechSegment.content);
       }
       ensureSpeechHighlightStyles(segment.content);
-      const rangeHighlightsSupported = supportsSpeechRangeHighlights(segment.content);
       segment.element.classList.toggle(
         'my-epubs-speech-current-paragraph',
         speechHighlightMode.value === 'paragraph'
-      );
-      segment.element.classList.toggle(
-        'my-epubs-speech-current-fallback',
-        speechHighlightMode.value !== 'paragraph' && !rangeHighlightsSupported
       );
       activeSpeechSegment = segment;
     }
@@ -2193,13 +2224,8 @@
     function clearSpeechHighlight() {
       styledSpeechContents.forEach(content => {
         const document = content.document;
-        document.querySelectorAll(
-          '.my-epubs-speech-current-paragraph, .my-epubs-speech-current-fallback'
-        ).forEach(element => {
-          element.classList.remove(
-            'my-epubs-speech-current-paragraph',
-            'my-epubs-speech-current-fallback'
-          );
+        document.querySelectorAll('.my-epubs-speech-current-paragraph').forEach(element => {
+          element.classList.remove('my-epubs-speech-current-paragraph');
         });
         clearSpeechRangeHighlights(content);
       });
@@ -2316,6 +2342,7 @@
       activeSpeechCharIndex = null;
       clearSpeechRangeHighlights(chunk.segment.content);
       highlightSpeechSegment(chunk.segment);
+      highlightSpeechWord(chunk, 0);
       updateSpeechProgress();
       const utterance = new SpeechSynthesisUtterance(chunk.text);
       utterance.rate = currentSpeechRate;
@@ -2504,11 +2531,15 @@
       });
       pageBackgroundColor.addEventListener('input', () => updateReaderColor(pageBackgroundColor, 'pageBackground'));
       pageTextColor.addEventListener('input', () => updateReaderColor(pageTextColor, 'pageText'));
-      speechWordColor.addEventListener('input', () => updateSpeechHighlightColor(speechWordColor, 'speechWordColor'));
-      speechLineColor.addEventListener('input', () => updateSpeechHighlightColor(speechLineColor, 'speechLineColor'));
-      speechParagraphColor.addEventListener('input', () =>
-        updateSpeechHighlightColor(speechParagraphColor, 'speechParagraphColor')
-      );
+      [
+        [speechWordColor, 'speechWordColor'],
+        [speechLineColor, 'speechLineColor'],
+        [speechParagraphColor, 'speechParagraphColor']
+      ].forEach(([input, preference]) => {
+        const updateColor = () => updateSpeechHighlightColor(input, preference);
+        input.addEventListener('input', updateColor);
+        input.addEventListener('change', updateColor);
+      });
       speechSkipWords.addEventListener('input', () => saveReaderPreference('speechSkipWords', speechSkipWords.value));
       speechPronunciationReplacements.addEventListener('input', () =>
         saveReaderPreference('pronunciationReplacements', speechPronunciationReplacements.value)

@@ -13,6 +13,9 @@
       --panel-bg: #ffffff;
       --border-color: #e8e8ed;
       --toc-hover: #f0f0f0;
+      --reader-stage: #e8e8e5;
+      --reader-surface: #ffffff;
+      --accent-color: #0071e3;
     }
 
     /* Dark mode for the whole UI */
@@ -22,6 +25,9 @@
       --panel-bg: #1e1e1e;
       --border-color: #333333;
       --toc-hover: #2a2a2a;
+      --reader-stage: #101113;
+      --reader-surface: #1e1e1e;
+      --accent-color: #6ab0f3;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -111,36 +117,88 @@
       flex-direction: column;
       overflow: hidden;
       position: relative;
+      min-height: 0;
+      background: var(--reader-stage);
     }
     #viewer {
       flex: 1;
-      background: transparent;
+      min-height: 0;
+      width: calc(100% - 2rem);
+      max-width: 1080px;
+      margin: 0 auto 1rem;
+      overflow: hidden;
+      background: var(--reader-surface);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.08);
+    }
+
+    #reader-progress {
+      width: calc(100% - 2rem);
+      max-width: 1080px;
+      margin: 1rem auto 0.75rem;
+      color: var(--text-color);
+      font-size: 0.82rem;
+    }
+    .progress-label {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 0.45rem;
+      color: #77777c;
+    }
+    body.dark-ui .progress-label { color: #b4b4ba; }
+    .progress-track {
+      height: 4px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: var(--border-color);
+    }
+    #progress-fill {
+      width: 0;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--accent-color);
+      transition: width 0.25s ease;
     }
     
     /* Reader Controls / Bottom Bar */
     #reader-controls {
       background: var(--panel-bg);
-      padding: 0.75rem 1.5rem;
+      padding: 0.75rem clamp(0.75rem, 2vw, 1.5rem);
       display: flex;
-      gap: 1rem;
+      gap: 0.65rem;
       border-top: 1px solid var(--border-color);
       align-items: center;
       transition: background 0.3s;
+      flex-wrap: wrap;
+      z-index: 5;
     }
     #reader-controls button {
-      background: #0071e3;
+      background: var(--accent-color);
       color: #fff;
       border: none;
-      padding: 0.6rem 1.2rem;
+      padding: 0.55rem 0.9rem;
       border-radius: 8px;
       cursor: pointer;
-      font-size: 0.95rem;
+      font-size: 0.9rem;
       font-weight: 500;
       transition: background 0.2s;
+      white-space: nowrap;
     }
-    #reader-controls button:hover:not(:disabled) { background: #0062c4; }
+    #reader-controls button:hover:not(:disabled) { filter: brightness(0.92); }
     #reader-controls button:disabled { background: #b0b0b5; cursor: default; }
     #reader-controls .spacer { flex: 1; }
+    .speech-controls, .page-controls {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    #reader-controls .secondary-action {
+      background: transparent;
+      color: var(--text-color);
+      border: 1px solid var(--border-color);
+    }
     #reader-controls .settings-btn, #reader-controls .toc-btn {
       background: transparent;
       color: var(--text-color);
@@ -149,6 +207,13 @@
       padding: 0.4rem 0.8rem;
     }
     #reader-controls .settings-btn:hover, #reader-controls .toc-btn:hover { background: rgba(128,128,128,0.1); }
+    #speech-status {
+      flex-basis: 100%;
+      min-height: 1.2em;
+      color: #77777c;
+      font-size: 0.8rem;
+    }
+    body.dark-ui #speech-status { color: #b4b4ba; }
 
     /* Settings Panel */
     #settings-panel {
@@ -166,6 +231,37 @@
       flex-direction: column;
       gap: 1rem;
     }
+    #music-panel {
+      display: none;
+      position: absolute;
+      bottom: 60px;
+      right: 20px;
+      background: var(--panel-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 1rem;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+      width: min(340px, calc(100vw - 2rem));
+      z-index: 100;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+    #music-panel h3 {
+      font-size: 0.9rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #86868b;
+    }
+    #music-file { width: 100%; color: var(--text-color); font-size: 0.85rem; }
+    #background-audio { width: 100%; }
+    #music-file-name, #music-status, .music-privacy-note {
+      overflow-wrap: anywhere;
+      color: #77777c;
+      font-size: 0.82rem;
+    }
+    body.dark-ui #music-file-name,
+    body.dark-ui #music-status,
+    body.dark-ui .music-privacy-note { color: #b4b4ba; }
     #settings-panel h3 {
       font-size: 0.9rem;
       text-transform: uppercase;
@@ -187,9 +283,27 @@
     }
     .setting-row button:hover { background: rgba(128,128,128,0.1); }
     .setting-row button.active {
-      background: #0071e3;
+      background: var(--accent-color);
       color: white;
-      border-color: #0071e3;
+      border-color: var(--accent-color);
+    }
+    .setting-control {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+      color: var(--text-color);
+      font-size: 0.85rem;
+    }
+    .setting-control select, .setting-control input {
+      width: 100%;
+      accent-color: var(--accent-color);
+    }
+    .setting-control select {
+      padding: 0.45rem;
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      background: var(--bg-color);
+      color: var(--text-color);
     }
 
     /* ---------- Table of Contents (TOC) Drawer ---------- */
@@ -258,6 +372,16 @@
       color: #86868b;
       font-size: 1.1rem;
     }
+
+    @media (max-width: 700px) {
+      header { padding: 0.8rem 1rem; }
+      #reader-controls { justify-content: center; }
+      #reader-controls .spacer { display: none; }
+      .speech-controls { order: 3; }
+      #speech-status { text-align: center; order: 4; }
+      #viewer { width: calc(100% - 1rem); margin-bottom: 0.5rem; border-radius: 8px; }
+      #reader-progress { width: calc(100% - 1.5rem); }
+    }
   </style>
 </head>
 <body>
@@ -288,6 +412,16 @@
       </div>
     </div>
 
+    <div id="reader-progress" aria-label="Reading progress">
+      <div class="progress-label">
+        <span id="progress-location">Open a book to begin</span>
+        <span id="progress-percent">0%</span>
+      </div>
+      <div class="progress-track" id="progress-track" role="progressbar"
+           aria-label="Book progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <div id="progress-fill"></div>
+      </div>
+    </div>
     <div id="viewer"></div>
     
     <!-- Settings Panel -->
@@ -314,16 +448,50 @@
           <button onclick="setFontFamily('sans-serif')" id="font-sans">Sans</button>
         </div>
       </div>
+      <div>
+        <h3>Read Aloud</h3>
+        <label class="setting-control" for="speech-voice">
+          Voice
+          <select id="speech-voice">
+            <option value="">System default</option>
+          </select>
+        </label>
+        <label class="setting-control" for="speech-rate" style="margin-top: 0.75rem;">
+          Speed <span id="speech-rate-label">1.0×</span>
+          <input id="speech-rate" type="range" min="0.7" max="1.5" step="0.1" value="1">
+        </label>
+      </div>
+    </div>
+
+    <div id="music-panel" aria-label="Background music">
+      <h3>Background Music</h3>
+      <label class="setting-control" for="music-file">
+        Choose an MP3 or WAV file
+        <input id="music-file" type="file" accept=".mp3,.wav,audio/mpeg,audio/wav,audio/x-wav">
+      </label>
+      <div id="music-file-name">No music loaded</div>
+      <audio id="background-audio" controls loop hidden></audio>
+      <div id="music-status" role="status" aria-live="polite">Choose a local audio file to begin.</div>
+      <div class="music-privacy-note">Your audio stays on this device and is not uploaded.</div>
     </div>
 
     <!-- Bottom Controls -->
     <div id="reader-controls">
       <button class="toc-btn" onclick="toggleTOC()">☰ Chapters</button>
-      <button id="prev-btn" onclick="prevPage()">← Prev</button>
-      <button id="next-btn" onclick="nextPage()">Next →</button>
+      <div class="page-controls">
+        <button id="prev-btn" onclick="prevPage()">← Prev</button>
+        <button id="next-btn" onclick="nextPage()">Next →</button>
+      </div>
+      <div class="speech-controls">
+        <button id="read-aloud-btn" onclick="startReadingAloud()">▶ Read aloud</button>
+        <button class="secondary-action" id="speech-pause-btn" onclick="toggleSpeechPause()" disabled>Pause</button>
+        <button class="secondary-action" id="speech-stop-btn" onclick="stopReadingAloud()" disabled>Stop</button>
+      </div>
       <span class="spacer"></span>
+      <button class="settings-btn" onclick="toggleMusicPanel()">♫ Music</button>
       <button class="settings-btn" onclick="toggleSettings()">⚙️ Settings</button>
-      <button onclick="showLibrary()" style="margin-left: 10px;">Close Book</button>
+      <button class="secondary-action" onclick="showLibrary()">Close Book</button>
+      <div id="speech-status" role="status" aria-live="polite"></div>
     </div>
   </div>
 
@@ -384,6 +552,11 @@
     let book = null;
     let rendition = null;
     let currentFontSize = 100;
+    let speechChunks = [];
+    let speechChunkIndex = 0;
+    let speechRunId = 0;
+    let speechActive = false;
+    let currentBookFile = null;
 
     const libraryView = document.getElementById('library-view');
     const readerView  = document.getElementById('reader-view');
@@ -400,6 +573,24 @@
     const tocDrawer = document.getElementById('toc-drawer');
     const tocOverlay = document.getElementById('toc-overlay');
     const tocList = document.getElementById('toc-list');
+    const progressLocation = document.getElementById('progress-location');
+    const progressPercent = document.getElementById('progress-percent');
+    const progressTrack = document.getElementById('progress-track');
+    const progressFill = document.getElementById('progress-fill');
+    const readAloudBtn = document.getElementById('read-aloud-btn');
+    const speechPauseBtn = document.getElementById('speech-pause-btn');
+    const speechStopBtn = document.getElementById('speech-stop-btn');
+    const speechStatus = document.getElementById('speech-status');
+    const speechVoice = document.getElementById('speech-voice');
+    const speechRate = document.getElementById('speech-rate');
+    const speechRateLabel = document.getElementById('speech-rate-label');
+    const speechSupported = 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window;
+    const musicPanel = document.getElementById('music-panel');
+    const musicFileInput = document.getElementById('music-file');
+    const musicFileName = document.getElementById('music-file-name');
+    const musicStatus = document.getElementById('music-status');
+    const backgroundAudio = document.getElementById('background-audio');
+    let musicObjectUrl = null;
 
     // --- Build the library grid ---
     function buildLibrary() {
@@ -430,6 +621,8 @@
     async function openBook(index) {
       const meta = BOOKS[index];
 
+      stopReadingAloud('');
+      currentBookFile = meta.file;
       libraryView.style.display = 'none';
       readerView.style.display = 'flex';
       backBtn.style.display = 'inline';
@@ -443,6 +636,7 @@
       // Close panels just in case
       toggleTOC(false);
       settingsPanel.style.display = 'none';
+      musicPanel.style.display = 'none';
 
       book = ePub(meta.file);
       rendition = book.renderTo('viewer', {
@@ -450,6 +644,7 @@
         height: '100%',
         spread: 'none'
       });
+      updateSpeechButtons();
 
       // Register Themes
       rendition.themes.register('light', {
@@ -465,10 +660,11 @@
         'a': { 'color': '#6ab0f3 !important' }
       });
 
-      rendition.themes.select('light');
+      const preferences = loadReaderPreferences();
+      rendition.themes.select(preferences.theme);
       rendition.themes.fontSize(currentFontSize + '%');
-      rendition.themes.font('serif');
-      updateSettingUI('light', 'font-serif');
+      rendition.themes.font(preferences.fontFamily);
+      updateSettingUI(preferences.theme, 'font-' + preferences.fontFamily.split('-')[0]);
 
       // Load the book and its Table of Contents
       await book.ready;
@@ -477,10 +673,54 @@
       // Build the TOC
       buildTOC(navigation.toc);
 
-      await rendition.display();
+      await rendition.display(loadSavedLocation(meta.file) || undefined);
       updateNavButtons();
+      updateReaderProgress();
       rendition.on('relocated', updateNavButtons);
+      rendition.on('relocated', updateReaderProgress);
       document.addEventListener('keydown', handleKey);
+    }
+
+    function loadSavedLocation(file) {
+      try {
+        const saved = localStorage.getItem('my-epubs-progress:' + file);
+        const cfi = saved ? JSON.parse(saved).cfi : null;
+        return typeof cfi === 'string' ? cfi : null;
+      } catch (error) {
+        console.warn('Unable to restore the saved reading position.', error);
+        return null;
+      }
+    }
+
+    function updateReaderProgress() {
+      if (!rendition || !book) return;
+      const location = rendition.currentLocation();
+      if (!location || !location.start) return;
+
+      const spineLength = book.spine.spineItems.length || 1;
+      const sectionIndex = Number(location.start.index) || 0;
+      const displayed = location.start.displayed || {};
+      let percentage = Number(location.start.percentage);
+      if (!Number.isFinite(percentage) ||
+          (percentage === 0 && (sectionIndex > 0 || Number(displayed.page) > 1))) {
+        const page = Number(displayed.page) || 1;
+        const total = Number(displayed.total) || 1;
+        percentage = (sectionIndex + (page - 1) / total) / spineLength;
+      }
+      percentage = Math.max(0, Math.min(1, percentage));
+      const percent = Math.round(percentage * 100);
+
+      progressLocation.textContent = 'Section ' + (sectionIndex + 1) + ' of ' + spineLength;
+      progressPercent.textContent = percent + '%';
+      progressTrack.setAttribute('aria-valuenow', String(percent));
+      progressFill.style.width = percent + '%';
+
+      try {
+        localStorage.setItem('my-epubs-progress:' + currentBookFile,
+          JSON.stringify({ cfi: location.start.cfi }));
+      } catch (error) {
+        console.warn('Unable to save the reading position.', error);
+      }
     }
 
     // --- Build Table of Contents ---
@@ -530,17 +770,21 @@
         tocDrawer.classList.add('active');
         tocOverlay.classList.add('active');
         settingsPanel.style.display = 'none'; // close settings if open
+        musicPanel.style.display = 'none';
       }
     }
 
     // --- Close the book ---
     function showLibrary() {
+      stopReadingAloud('');
       readerView.style.display = 'none';
       libraryView.style.display = 'block';
       backBtn.style.display = 'none';
       headerTitle.textContent = '📚 My EPUB Collection';
       settingsPanel.style.display = 'none';
+      musicPanel.style.display = 'none';
       toggleTOC(false);
+      stopMusic();
 
       if (rendition) { rendition.destroy(); rendition = null; }
       if (book) { book.destroy(); book = null; }
@@ -555,7 +799,62 @@
         settingsPanel.style.display = 'none';
       } else {
         settingsPanel.style.display = 'flex';
+        musicPanel.style.display = 'none';
         toggleTOC(false); // close TOC if open
+      }
+    }
+
+    function toggleMusicPanel() {
+      if (musicPanel.style.display === 'flex') {
+        musicPanel.style.display = 'none';
+      } else {
+        musicPanel.style.display = 'flex';
+        settingsPanel.style.display = 'none';
+        toggleTOC(false);
+      }
+    }
+
+    function loadMusicFile() {
+      const file = musicFileInput.files && musicFileInput.files[0];
+      if (!file) return;
+      if (!/\.(mp3|wav)$/i.test(file.name)) {
+        musicStatus.textContent = 'Please choose an MP3 or WAV file.';
+        musicFileInput.value = '';
+        return;
+      }
+
+      if (musicObjectUrl) URL.revokeObjectURL(musicObjectUrl);
+      musicObjectUrl = URL.createObjectURL(file);
+      musicFileName.textContent = file.name;
+      backgroundAudio.src = musicObjectUrl;
+      backgroundAudio.hidden = false;
+      backgroundAudio.load();
+      musicStatus.textContent = 'Loading audio...';
+
+      const playback = backgroundAudio.play();
+      if (playback && playback.catch) {
+        playback.catch(error => {
+          if (error.name === 'NotAllowedError') {
+            musicStatus.textContent = 'Audio is ready. Press play in the player to start.';
+          } else {
+            musicStatus.textContent = 'Unable to play this audio file: ' + error.message;
+            console.error('Unable to play the selected audio file.', error);
+          }
+        });
+      }
+    }
+
+    function stopMusic() {
+      backgroundAudio.pause();
+      backgroundAudio.removeAttribute('src');
+      backgroundAudio.load();
+      backgroundAudio.hidden = true;
+      musicFileInput.value = '';
+      musicFileName.textContent = 'No music loaded';
+      musicStatus.textContent = 'Choose a local audio file to begin.';
+      if (musicObjectUrl) {
+        URL.revokeObjectURL(musicObjectUrl);
+        musicObjectUrl = null;
       }
     }
 
@@ -570,18 +869,46 @@
         document.body.classList.remove('dark-ui');
         updateSettingUI(theme, null);
       }
+      saveReaderPreference('theme', theme);
     }
 
     function changeFontSize(delta) {
       if (!rendition) return;
       currentFontSize = Math.max(50, Math.min(250, currentFontSize + delta));
       rendition.themes.fontSize(currentFontSize + '%');
+      saveReaderPreference('fontSize', currentFontSize);
     }
 
     function setFontFamily(family) {
       if (!rendition) return;
       rendition.themes.font(family);
       updateSettingUI(null, 'font-' + family.split('-')[0]);
+      saveReaderPreference('fontFamily', family);
+    }
+
+    function saveReaderPreference(name, value) {
+      try {
+        localStorage.setItem('my-epubs-' + name, String(value));
+      } catch (error) {
+        console.warn('Unable to save reader preferences.', error);
+      }
+    }
+
+    function loadReaderPreferences() {
+      try {
+        const savedTheme = localStorage.getItem('my-epubs-theme');
+        const savedFontFamily = localStorage.getItem('my-epubs-fontFamily');
+        const theme = ['light', 'sepia', 'dark'].includes(savedTheme) ? savedTheme : 'light';
+        const fontFamily = ['serif', 'sans-serif'].includes(savedFontFamily) ? savedFontFamily : 'serif';
+        const savedFontSize = Number(localStorage.getItem('my-epubs-fontSize'));
+        if (Number.isFinite(savedFontSize) && savedFontSize >= 50 && savedFontSize <= 250) {
+          currentFontSize = savedFontSize;
+        }
+        return { theme, fontFamily };
+      } catch (error) {
+        console.warn('Unable to restore reader preferences.', error);
+        return { theme: 'light', fontFamily: 'serif' };
+      }
     }
 
     function updateSettingUI(theme, fontId) {
@@ -613,11 +940,165 @@
 
     function handleKey(e) {
       if (!rendition) return;
-      // Don't flip pages if user is typing in the search or using arrows in a menu
+      if (e.target.closest && e.target.closest('button, input, select, textarea, [contenteditable="true"]')) return;
       if (e.key === 'ArrowLeft')  { e.preventDefault(); prevPage(); }
       if (e.key === 'ArrowRight') { e.preventDefault(); nextPage(); }
     }
 
+    function populateSpeechVoices() {
+      if (!speechSupported) return;
+      const selectedVoice = speechVoice.value;
+      const defaultOption = document.createElement('option');
+      defaultOption.value = '';
+      defaultOption.textContent = 'System default';
+      speechVoice.replaceChildren(defaultOption);
+
+      window.speechSynthesis.getVoices().forEach(voice => {
+        const option = document.createElement('option');
+        option.value = voice.voiceURI;
+        option.textContent = voice.name + (voice.lang ? ' (' + voice.lang + ')' : '');
+        speechVoice.appendChild(option);
+      });
+      if (Array.from(speechVoice.options).some(option => option.value === selectedVoice)) {
+        speechVoice.value = selectedVoice;
+      }
+    }
+
+    function makeSpeechChunks(text) {
+      const words = text.replace(/\s+/g, ' ').trim().split(' ');
+      const chunks = [];
+      let chunk = '';
+      words.forEach(word => {
+        const nextChunk = chunk ? chunk + ' ' + word : word;
+        if (nextChunk.length > 1800 && chunk) {
+          chunks.push(chunk);
+          chunk = word;
+        } else {
+          chunk = nextChunk;
+        }
+      });
+      if (chunk) chunks.push(chunk);
+      return chunks;
+    }
+
+    function startReadingAloud() {
+      if (!speechSupported) {
+        speechStatus.textContent = 'Read aloud is not supported by this browser.';
+        return;
+      }
+      if (!rendition) return;
+
+      const contents = rendition.getContents();
+      const body = contents.length && contents[0].document.body;
+      if (!body) {
+        speechStatus.textContent = 'The current chapter text is not available yet.';
+        return;
+      }
+
+      const textBody = body.cloneNode(true);
+      textBody.querySelectorAll('script, style, nav, svg').forEach(element => element.remove());
+      speechChunks = makeSpeechChunks(textBody.innerText || textBody.textContent || '');
+      if (!speechChunks.length) {
+        speechStatus.textContent = 'No readable text was found in the current chapter.';
+        return;
+      }
+
+      window.speechSynthesis.cancel();
+      speechRunId += 1;
+      speechChunkIndex = 0;
+      speechActive = true;
+      updateSpeechButtons();
+      speechStatus.textContent = 'Reading the current chapter aloud.';
+      speakNextChunk(speechRunId);
+    }
+
+    function speakNextChunk(runId) {
+      if (runId !== speechRunId || !speechActive) return;
+      if (speechChunkIndex >= speechChunks.length) {
+        speechActive = false;
+        updateSpeechButtons();
+        speechStatus.textContent = 'Finished reading the current chapter.';
+        return;
+      }
+
+      const utterance = new SpeechSynthesisUtterance(speechChunks[speechChunkIndex]);
+      utterance.rate = Number(speechRate.value);
+      const voice = window.speechSynthesis.getVoices().find(item => item.voiceURI === speechVoice.value);
+      if (voice) utterance.voice = voice;
+      utterance.onend = () => {
+        if (runId !== speechRunId) return;
+        speechChunkIndex += 1;
+        speakNextChunk(runId);
+      };
+      utterance.onerror = event => {
+        if (runId !== speechRunId || event.error === 'canceled') return;
+        speechActive = false;
+        updateSpeechButtons();
+        speechStatus.textContent = 'Read aloud stopped because speech playback failed: ' + event.error + '.';
+      };
+      window.speechSynthesis.speak(utterance);
+    }
+
+    function toggleSpeechPause() {
+      if (!speechSupported || !speechActive) return;
+      if (window.speechSynthesis.paused) {
+        window.speechSynthesis.resume();
+        speechPauseBtn.textContent = 'Pause';
+        speechStatus.textContent = 'Read aloud resumed.';
+      } else {
+        window.speechSynthesis.pause();
+        speechPauseBtn.textContent = 'Resume';
+        speechStatus.textContent = 'Read aloud paused.';
+      }
+    }
+
+    function stopReadingAloud(message = 'Read aloud stopped.') {
+      speechRunId += 1;
+      speechActive = false;
+      speechChunks = [];
+      speechChunkIndex = 0;
+      if (speechSupported) window.speechSynthesis.cancel();
+      updateSpeechButtons();
+      if (message) speechStatus.textContent = message;
+    }
+
+    function updateSpeechButtons() {
+      readAloudBtn.disabled = !speechSupported || !rendition || speechActive;
+      speechPauseBtn.disabled = !speechSupported || !speechActive;
+      speechStopBtn.disabled = !speechSupported || !speechActive;
+      if (!speechActive) speechPauseBtn.textContent = 'Pause';
+    }
+
+    function initializeReaderSettings() {
+      const preferences = loadReaderPreferences();
+      if (preferences.theme === 'dark') document.body.classList.add('dark-ui');
+      document.getElementById('theme-' + preferences.theme).classList.add('active');
+      const fontId = 'font-' + preferences.fontFamily.split('-')[0];
+      document.getElementById(fontId).classList.add('active');
+
+      speechRate.addEventListener('input', () => {
+        speechRateLabel.textContent = Number(speechRate.value).toFixed(1) + '×';
+      });
+      if (speechSupported) {
+        populateSpeechVoices();
+        window.speechSynthesis.addEventListener('voiceschanged', populateSpeechVoices);
+      } else {
+        speechStatus.textContent = 'Read aloud is not supported by this browser.';
+      }
+      musicFileInput.addEventListener('change', loadMusicFile);
+      backgroundAudio.addEventListener('play', () => {
+        musicStatus.textContent = 'Playing: ' + musicFileName.textContent;
+      });
+      backgroundAudio.addEventListener('pause', () => {
+        if (backgroundAudio.src) musicStatus.textContent = 'Paused: ' + musicFileName.textContent;
+      });
+      backgroundAudio.addEventListener('error', () => {
+        musicStatus.textContent = 'This audio file could not be decoded or played by the browser.';
+      });
+      updateSpeechButtons();
+    }
+
+    initializeReaderSettings();
     buildLibrary();
   </script>
 </body>

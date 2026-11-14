@@ -2079,11 +2079,21 @@
         document.head.appendChild(style);
       }
       style = document.querySelector('[data-my-epubs-speech-style]');
+      const fallbackColor = speechHighlightMode.value === 'line'
+        ? speechLineColor.value
+        : speechWordColor.value;
       style.textContent =
         '.my-epubs-speech-current-paragraph{background-color:' + speechParagraphColor.value + '!important;outline:1px solid ' + speechParagraphColor.value + ';border-radius:2px}' +
+        '.my-epubs-speech-current-fallback{background-color:' + fallbackColor + '!important;outline:1px solid ' + fallbackColor + ';border-radius:2px}' +
         '::highlight(my-epubs-speech-line){background-color:' + speechLineColor.value + ';color:inherit}' +
         '::highlight(my-epubs-speech-word){background-color:' + speechWordColor.value + ';color:inherit}';
       styledSpeechContents.add(content);
+    }
+
+    function supportsSpeechRangeHighlights(content) {
+      const view = content.document.defaultView;
+      return Boolean(view.CSS && view.CSS.highlights && view.Highlight &&
+        (!view.CSS.supports || view.CSS.supports('selector(::highlight(my-epubs-speech-word))')));
     }
 
     function updateSpeechHighlightStyles() {
@@ -2154,12 +2164,18 @@
     function highlightSpeechSegment(segment) {
       if (activeSpeechSegment && activeSpeechSegment.element !== segment.element) {
         activeSpeechSegment.element.classList.remove('my-epubs-speech-current-paragraph');
+        activeSpeechSegment.element.classList.remove('my-epubs-speech-current-fallback');
         clearSpeechRangeHighlights(activeSpeechSegment.content);
       }
       ensureSpeechHighlightStyles(segment.content);
+      const rangeHighlightsSupported = supportsSpeechRangeHighlights(segment.content);
       segment.element.classList.toggle(
         'my-epubs-speech-current-paragraph',
         speechHighlightMode.value === 'paragraph'
+      );
+      segment.element.classList.toggle(
+        'my-epubs-speech-current-fallback',
+        speechHighlightMode.value !== 'paragraph' && !rangeHighlightsSupported
       );
       activeSpeechSegment = segment;
     }
@@ -2177,8 +2193,13 @@
     function clearSpeechHighlight() {
       styledSpeechContents.forEach(content => {
         const document = content.document;
-        document.querySelectorAll('.my-epubs-speech-current-paragraph').forEach(element => {
-          element.classList.remove('my-epubs-speech-current-paragraph');
+        document.querySelectorAll(
+          '.my-epubs-speech-current-paragraph, .my-epubs-speech-current-fallback'
+        ).forEach(element => {
+          element.classList.remove(
+            'my-epubs-speech-current-paragraph',
+            'my-epubs-speech-current-fallback'
+          );
         });
         clearSpeechRangeHighlights(content);
       });

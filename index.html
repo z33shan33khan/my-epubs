@@ -557,7 +557,8 @@
       #reader-controls button { padding: 0.4rem 0.55rem; font-size: 0.82rem; }
       #speech-highlight-mode { max-width: 7.5rem; }
       #settings-panel {
-        top: 0.5rem;
+        position: fixed;
+        top: 4.5rem;
         right: 0.5rem;
         bottom: calc(42vh + 0.5rem);
         bottom: calc(42dvh + 0.5rem);
@@ -1471,6 +1472,7 @@
         settingsPanel.style.display = 'none';
       } else {
         settingsPanel.style.display = 'flex';
+        settingsPanel.scrollTop = 0;
         musicPanel.style.display = 'none';
         toggleTOC(false); // close TOC if open
       }

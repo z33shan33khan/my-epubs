@@ -21,13 +21,13 @@
 
     /* Dark mode for the whole UI */
     body.dark-ui {
-      --bg-color: #121212;
+      --bg-color: #000000;
       --text-color: #f5f5f7;
       --panel-bg: #1e1e1e;
       --border-color: #333333;
       --toc-hover: #2a2a2a;
-      --reader-stage: #101113;
-      --reader-surface: #1e1e1e;
+      --reader-stage: #000000;
+      --reader-surface: #000000;
       --accent-color: #6ab0f3;
     }
 
@@ -919,7 +919,7 @@
     const READER_THEME_COLORS = {
       light: { background: '#ffffff', text: '#1d1d1f' },
       sepia: { background: '#f4ecd8', text: '#5b4636' },
-      dark: { background: '#121212', text: '#e0e0e0' }
+      dark: { background: '#000000', text: '#e0e0e0' }
     };
     const DEFAULT_CHARACTER_GENDERS = 'Chu Fang = he/his/him\nCai Lin = she/her';
     const LIBRARY_PASSCODE_SALT = '47379e162ce88f72a05569f5e7ce4476';
@@ -1691,6 +1691,11 @@
           const value = localStorage.getItem('my-epubs-' + name);
           return /^#[0-9a-f]{6}$/i.test(value || '') ? value : fallback;
         };
+        const savedPageBackground = localStorage.getItem('my-epubs-pageBackground');
+        const pageBackground = theme === 'dark' && savedPageBackground &&
+          savedPageBackground.toLowerCase() === '#121212'
+          ? READER_THEME_COLORS.dark.background
+          : getColor('pageBackground', READER_THEME_COLORS[theme].background);
         const savedFontSize = Number(localStorage.getItem('my-epubs-fontSize'));
         const savedSpeechRate = Number(localStorage.getItem('my-epubs-speechRate'));
         const savedHighlightMode = localStorage.getItem('my-epubs-speechHighlightMode');
@@ -1704,7 +1709,7 @@
           theme,
           fontFamily,
           speechRate,
-          pageBackground: getColor('pageBackground', READER_THEME_COLORS[theme].background),
+          pageBackground,
           pageText: getColor('pageText', READER_THEME_COLORS[theme].text),
           speechWordColor: getColor('speechWordColor', '#ffbe28'),
           speechLineColor: getColor('speechLineColor', '#ffd700'),

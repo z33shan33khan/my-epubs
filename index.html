@@ -14,7 +14,7 @@
       --panel-bg: #ffffff;
       --border-color: #e8e8ed;
       --toc-hover: #f0f0f0;
-      --reader-stage: #e8e8e5;
+      --reader-stage: #f5f5f7;
       --reader-surface: #ffffff;
       --accent-color: #0071e3;
     }
@@ -2245,6 +2245,25 @@
       return createSpeechRange(chunk.segment, chunk.start + start, chunk.start + end);
     }
 
+    function keepSpeechRangeVisible(content, range) {
+      if (!rendition || rendition.settings.flow !== 'scrolled-doc') return;
+      const scroller = viewerEl.querySelector('.epub-container');
+      const frame = content.document.defaultView.frameElement;
+      const rangeRect = range.getBoundingClientRect();
+      const scrollerRect = scroller && scroller.getBoundingClientRect();
+      const frameRect = frame && frame.getBoundingClientRect();
+      if (!scroller || !frame || !scrollerRect || !frameRect || !rangeRect.height) return;
+
+      const viewportTop = scrollerRect.top + scroller.clientTop;
+      const activeTop = frameRect.top + rangeRect.top;
+      const activeBottom = activeTop + rangeRect.height;
+      const viewportHeight = scroller.clientHeight;
+      if (activeTop < viewportTop + viewportHeight * 0.25 ||
+          activeBottom > viewportTop + viewportHeight * 0.7) {
+        scroller.scrollTop += activeTop - (viewportTop + viewportHeight * 0.4);
+      }
+    }
+
     function getSpeechLineRange(segment, index) {
       const sourceIndex = segment.sourceIndexes[index];
       if (!Number.isInteger(sourceIndex)) return null;
@@ -2289,6 +2308,7 @@
       if (wordRange) {
         if (useOverlays) drawSpeechRangeOverlay(chunk.segment.content, wordRange, speechWordColor.value, 'word');
         else view.CSS.highlights.set('my-epubs-speech-word', new view.Highlight(wordRange));
+        keepSpeechRangeVisible(chunk.segment.content, wordRange);
       }
     }
 

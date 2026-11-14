@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>My EPUB Collection</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23f5f5f7'/%3E%3Cpath d='M32 20c-7-5-15-5-22-2v28c7-3 15-3 22 2 7-5 15-5 22-2V18c-7-3-15-3-22 2Z' fill='%23fff' stroke='%230071e3' stroke-width='3' stroke-linejoin='round'/%3E%3Cpath d='M32 20v28M16 26c4-1 8 0 11 2M16 34c4-1 8 0 11 2m10-8c3-2 7-3 11-2m-11 10c3-2 7-3 11-2' fill='none' stroke='%230071e3' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js"></script>
   <style>
@@ -989,15 +990,20 @@
       if (!rendition) return;
 
       const contents = rendition.getContents();
-      const body = contents.length && contents[0].document.body;
-      if (!body) {
+      const text = contents.map(content => {
+        const body = content.document && content.document.body;
+        if (!body) return '';
+
+        const textBody = body.cloneNode(true);
+        textBody.querySelectorAll('script, style, nav, svg').forEach(element => element.remove());
+        return textBody.innerText || textBody.textContent || '';
+      }).filter(Boolean).join('\n');
+      if (!text.trim()) {
         speechStatus.textContent = 'The current chapter text is not available yet.';
         return;
       }
 
-      const textBody = body.cloneNode(true);
-      textBody.querySelectorAll('script, style, nav, svg').forEach(element => element.remove());
-      speechChunks = makeSpeechChunks(textBody.innerText || textBody.textContent || '');
+      speechChunks = makeSpeechChunks(text);
       if (!speechChunks.length) {
         speechStatus.textContent = 'No readable text was found in the current chapter.';
         return;

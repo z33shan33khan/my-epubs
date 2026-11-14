@@ -148,6 +148,7 @@
       margin-bottom: 0.45rem;
       color: #77777c;
     }
+    #progress-location { overflow-wrap: anywhere; }
     body.dark-ui .progress-label { color: #b4b4ba; }
     .progress-track {
       height: 4px;
@@ -306,6 +307,29 @@
       background: var(--bg-color);
       color: var(--text-color);
     }
+    .speech-rate-control {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .speech-rate-control button {
+      width: 2rem;
+      height: 2rem;
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      background: var(--bg-color);
+      color: var(--text-color);
+      cursor: pointer;
+    }
+    .speech-rate-control input {
+      width: 5rem;
+      padding: 0.4rem;
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      background: var(--bg-color);
+      color: var(--text-color);
+      text-align: center;
+    }
 
     /* ---------- Table of Contents (TOC) Drawer ---------- */
     #toc-overlay {
@@ -457,10 +481,14 @@
             <option value="">System default</option>
           </select>
         </label>
-        <label class="setting-control" for="speech-rate" style="margin-top: 0.75rem;">
-          Speed <span id="speech-rate-label">1.0×</span>
-          <input id="speech-rate" type="range" min="0.7" max="1.5" step="0.1" value="1">
-        </label>
+        <div class="setting-control" style="margin-top: 0.75rem;">
+          <label for="speech-rate">Speed <span id="speech-rate-label">1.0×</span></label>
+          <div class="speech-rate-control">
+            <button type="button" aria-label="Decrease speech speed" onclick="adjustSpeechRate(-0.1)">−</button>
+            <input id="speech-rate" type="number" min="0.5" max="3" step="any" value="1.0" inputmode="decimal">
+            <button type="button" aria-label="Increase speech speed" onclick="adjustSpeechRate(0.1)">+</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -557,7 +585,13 @@
     let speechChunkIndex = 0;
     let speechRunId = 0;
     let speechActive = false;
+    let activeSpeechSegment = null;
+    let displayedSpeechCfi = null;
+    let styledSpeechContents = new Set();
+    let currentSpeechRate = 1;
     let currentBookFile = null;
+    let currentBookTitle = '';
+    let bookNavigation = [];
 
     const libraryView = document.getElementById('library-view');
     const readerView  = document.getElementById('reader-view');
@@ -624,6 +658,7 @@
 
       stopReadingAloud('');
       currentBookFile = meta.file;
+      currentBookTitle = meta.title;
       libraryView.style.display = 'none';
       readerView.style.display = 'flex';
       backBtn.style.display = 'inline';
@@ -672,6 +707,7 @@
       const navigation = await book.loaded.navigation;
       
       // Build the TOC
+      bookNavigation = flattenNavigation(navigation.toc);
       buildTOC(navigation.toc);
 
       await rendition.display(loadSavedLocation(meta.file) || undefined);
@@ -680,6 +716,14 @@
       rendition.on('relocated', updateNavButtons);
       rendition.on('relocated', updateReaderProgress);
       document.addEventListener('keydown', handleKey);
+    }
+
+    function flattenNavigation(items, result = []) {
+      (items || []).forEach(item => {
+        result.push(item);
+        flattenNavigation(item.subitems, result);
+      });
+      return result;
     }
 
     function loadSavedLocation(file) {
@@ -691,6 +735,21 @@
         console.warn('Unable to restore the saved reading position.', error);
         return null;
       }
+    }
+
+    function getChapterInfo(location) {
+      const sectionIndex = Number(location && location.start && location.start.index) || 0;
+      const spineItem = book && book.spine.spineItems[sectionIndex];
+      const href = String((location && location.start && location.start.href) || (spineItem && spineItem.href) || '');
+      const hrefWithoutFragment = href.split('#')[0];
+      const chapterIndex = bookNavigation.findIndex(item => item.href === href);
+      const matchingIndex = chapterIndex >= 0 ? chapterIndex :
+        bookNavigation.findIndex(item => String(item.href || '').split('#')[0] === hrefWithoutFragment);
+      const chapter = matchingIndex >= 0 ? bookNavigation[matchingIndex] : null;
+      return {
+        number: matchingIndex >= 0 ? matchingIndex + 1 : sectionIndex + 1,
+        title: chapter ? (chapter.label || 'Untitled chapter').trim() : 'Section ' + (sectionIndex + 1)
+      };
     }
 
     function updateReaderProgress() {
@@ -711,7 +770,9 @@
       percentage = Math.max(0, Math.min(1, percentage));
       const percent = Math.round(percentage * 100);
 
-      progressLocation.textContent = 'Section ' + (sectionIndex + 1) + ' of ' + spineLength;
+      const chapter = getChapterInfo(location);
+      progressLocation.textContent = currentBookTitle + ' · Chapter ' + chapter.number + ': ' +
+        chapter.title + ' · Section ' + (sectionIndex + 1) + ' of ' + spineLength;
       progressPercent.textContent = percent + '%';
       progressTrack.setAttribute('aria-valuenow', String(percent));
       progressFill.style.width = percent + '%';
@@ -902,13 +963,17 @@
         const theme = ['light', 'sepia', 'dark'].includes(savedTheme) ? savedTheme : 'light';
         const fontFamily = ['serif', 'sans-serif'].includes(savedFontFamily) ? savedFontFamily : 'serif';
         const savedFontSize = Number(localStorage.getItem('my-epubs-fontSize'));
+        const savedSpeechRate = Number(localStorage.getItem('my-epubs-speechRate'));
         if (Number.isFinite(savedFontSize) && savedFontSize >= 50 && savedFontSize <= 250) {
           currentFontSize = savedFontSize;
         }
-        return { theme, fontFamily };
+        const speechRate = Number.isFinite(savedSpeechRate) && savedSpeechRate >= 0.5 && savedSpeechRate <= 3
+          ? savedSpeechRate
+          : 1;
+        return { theme, fontFamily, speechRate };
       } catch (error) {
         console.warn('Unable to restore reader preferences.', error);
-        return { theme: 'light', fontFamily: 'serif' };
+        return { theme: 'light', fontFamily: 'serif', speechRate: 1 };
       }
     }
 
@@ -965,21 +1030,163 @@
       }
     }
 
-    function makeSpeechChunks(text) {
-      const words = text.replace(/\s+/g, ' ').trim().split(' ');
+    function getSpeechTextMap(element) {
+      const document = element.ownerDocument;
+      const walker = document.createTreeWalker(element, 4);
+      const characters = [];
+      const positions = [];
+      let pendingSpace = null;
+      let node;
+
+      while ((node = walker.nextNode())) {
+        if (node.parentElement.closest('script, style, nav, svg, [hidden], [aria-hidden="true"]')) continue;
+        for (let offset = 0; offset < node.nodeValue.length; offset += 1) {
+          const character = node.nodeValue[offset];
+          if (/\s/.test(character)) {
+            if (characters.length && !pendingSpace) pendingSpace = { node, offset };
+            continue;
+          }
+          if (pendingSpace) {
+            characters.push(' ');
+            positions.push(pendingSpace);
+            pendingSpace = null;
+          }
+          characters.push(character);
+          positions.push({ node, offset });
+        }
+      }
+
+      return { text: characters.join(''), positions };
+    }
+
+    function collectSpeechSegments() {
+      const segments = [];
+      const blockSelector = 'p, h1, h2, h3, h4, h5, h6, blockquote, pre, li';
+      rendition.getContents().forEach(content => {
+        const body = content.document && content.document.body;
+        if (!body) return;
+
+        const blocks = Array.from(body.querySelectorAll(blockSelector)).filter(element => {
+          if (element.matches('li, blockquote') &&
+              element.querySelector('p, h1, h2, h3, h4, h5, h6, pre')) return false;
+          return !element.closest('nav, [hidden], [aria-hidden="true"]');
+        });
+        const elements = blocks.length ? blocks : [body];
+
+        elements.forEach(element => {
+          const textMap = getSpeechTextMap(element);
+          if (!textMap.text) return;
+          segments.push({
+            content,
+            element,
+            text: textMap.text,
+            positions: textMap.positions
+          });
+        });
+      });
+      return segments;
+    }
+
+    function makeSpeechChunks(segments) {
+      const maxLength = 220;
       const chunks = [];
-      let chunk = '';
-      words.forEach(word => {
-        const nextChunk = chunk ? chunk + ' ' + word : word;
-        if (nextChunk.length > 1800 && chunk) {
-          chunks.push(chunk);
-          chunk = word;
-        } else {
-          chunk = nextChunk;
+      segments.forEach(segment => {
+        let start = 0;
+        while (start < segment.text.length) {
+          let end = Math.min(start + maxLength, segment.text.length);
+          if (end < segment.text.length) {
+            const wordBoundary = segment.text.lastIndexOf(' ', end);
+            if (wordBoundary > start) end = wordBoundary;
+          }
+          const text = segment.text.slice(start, end).trim();
+          if (text) {
+            const leadingSpaceCount = segment.text.slice(start, end).search(/\S/);
+            const chunkStart = start + leadingSpaceCount;
+            const position = segment.positions[chunkStart];
+            const range = segment.content.document.createRange();
+            range.setStart(position.node, position.offset);
+            range.setEnd(position.node, position.offset + 1);
+            chunks.push({
+              segment,
+              start: chunkStart,
+              text,
+              cfi: segment.content.cfiFromRange(range)
+            });
+          }
+          start = end;
+          while (/\s/.test(segment.text[start] || '')) start += 1;
         }
       });
-      if (chunk) chunks.push(chunk);
       return chunks;
+    }
+
+    function ensureSpeechHighlightStyles(content) {
+      const document = content.document;
+      if (!document.querySelector('[data-my-epubs-speech-style]')) {
+        const style = document.createElement('style');
+        style.setAttribute('data-my-epubs-speech-style', '');
+        style.textContent =
+          '.my-epubs-speech-current-line{background-color:rgba(255,215,0,.28)!important;outline:1px solid rgba(220,160,0,.35);border-radius:2px}' +
+          '::highlight(my-epubs-speech-word){background-color:rgba(255,190,40,.75);color:inherit}';
+        document.head.appendChild(style);
+      }
+      styledSpeechContents.add(content);
+    }
+
+    function highlightSpeechWord(chunk, charIndex) {
+      const segment = chunk.segment;
+      const index = Math.max(0, Math.min(chunk.text.length - 1, Number(charIndex) || 0));
+      let start = index;
+      let end = index;
+      while (start > 0 && !/\s/.test(chunk.text[start - 1])) start -= 1;
+      while (end < chunk.text.length && !/\s/.test(chunk.text[end])) end += 1;
+
+      const firstPosition = segment.positions[chunk.start + start];
+      const lastPosition = segment.positions[chunk.start + end - 1];
+      if (!firstPosition || !lastPosition) return;
+
+      const range = segment.content.document.createRange();
+      range.setStart(firstPosition.node, firstPosition.offset);
+      range.setEnd(lastPosition.node, lastPosition.offset + 1);
+      const view = segment.content.document.defaultView;
+      if (view.CSS && view.CSS.highlights && view.Highlight) {
+        view.CSS.highlights.set('my-epubs-speech-word', new view.Highlight(range));
+      }
+    }
+
+    function highlightSpeechSegment(segment) {
+      if (activeSpeechSegment && activeSpeechSegment.element !== segment.element) {
+        activeSpeechSegment.element.classList.remove('my-epubs-speech-current-line');
+      }
+      ensureSpeechHighlightStyles(segment.content);
+      segment.element.classList.add('my-epubs-speech-current-line');
+      activeSpeechSegment = segment;
+    }
+
+    function clearSpeechHighlight() {
+      styledSpeechContents.forEach(content => {
+        const document = content.document;
+        document.querySelectorAll('.my-epubs-speech-current-line').forEach(element => {
+          element.classList.remove('my-epubs-speech-current-line');
+        });
+        const view = document.defaultView;
+        if (view.CSS && view.CSS.highlights) view.CSS.highlights.delete('my-epubs-speech-word');
+      });
+      styledSpeechContents.clear();
+      activeSpeechSegment = null;
+      displayedSpeechCfi = null;
+    }
+
+    function updateSpeechProgress() {
+      const location = rendition && rendition.currentLocation();
+      const percent = progressPercent.textContent || '0%';
+      const chapter = getChapterInfo(location);
+      const chapterProgress = speechChunks.length
+        ? Math.round((speechChunkIndex + 1) / speechChunks.length * 100)
+        : 0;
+      speechStatus.textContent = 'Reading "' + currentBookTitle + '" · Chapter ' +
+        chapter.number + ': ' + chapter.title + ' · Book ' + percent +
+        ' · Chapter progress ' + chapterProgress + '%';
     }
 
     function startReadingAloud() {
@@ -989,48 +1196,90 @@
       }
       if (!rendition) return;
 
-      const contents = rendition.getContents();
-      const text = contents.map(content => {
-        const body = content.document && content.document.body;
-        if (!body) return '';
-
-        const textBody = body.cloneNode(true);
-        textBody.querySelectorAll('script, style, nav, svg').forEach(element => element.remove());
-        return textBody.innerText || textBody.textContent || '';
-      }).filter(Boolean).join('\n');
-      if (!text.trim()) {
-        speechStatus.textContent = 'The current chapter text is not available yet.';
-        return;
-      }
-
-      speechChunks = makeSpeechChunks(text);
+      const segments = collectSpeechSegments();
+      speechChunks = makeSpeechChunks(segments);
       if (!speechChunks.length) {
         speechStatus.textContent = 'No readable text was found in the current chapter.';
         return;
       }
 
       window.speechSynthesis.cancel();
+      clearSpeechHighlight();
       speechRunId += 1;
       speechChunkIndex = 0;
       speechActive = true;
+      displayedSpeechCfi = null;
       updateSpeechButtons();
-      speechStatus.textContent = 'Reading the current chapter aloud.';
       speakNextChunk(speechRunId);
     }
 
-    function speakNextChunk(runId) {
+    async function continueReadingNextSection(runId) {
+      const location = rendition && rendition.currentLocation();
+      const currentIndex = location && location.start ? Number(location.start.index) : -1;
+      const spineItems = book.spine.spineItems;
+
+      for (let index = currentIndex + 1; index < spineItems.length; index += 1) {
+        if (runId !== speechRunId || !speechActive) return;
+        try {
+          await rendition.display(spineItems[index].href);
+        } catch (error) {
+          if (runId !== speechRunId) return;
+          speechActive = false;
+          updateSpeechButtons();
+          speechStatus.textContent = 'Read aloud could not open the next chapter: ' + error.message;
+          console.error('Unable to continue read-aloud in the next chapter.', error);
+          return;
+        }
+        if (runId !== speechRunId || !speechActive) return;
+
+        speechChunks = makeSpeechChunks(collectSpeechSegments());
+        if (speechChunks.length) {
+          speechChunkIndex = 0;
+          displayedSpeechCfi = null;
+          await speakNextChunk(runId);
+          return;
+        }
+      }
+
+      speechActive = false;
+      updateSpeechButtons();
+      speechStatus.textContent = 'Finished reading "' + currentBookTitle + '" from beginning to end.';
+    }
+
+    async function speakNextChunk(runId) {
       if (runId !== speechRunId || !speechActive) return;
       if (speechChunkIndex >= speechChunks.length) {
-        speechActive = false;
-        updateSpeechButtons();
-        speechStatus.textContent = 'Finished reading the current chapter.';
+        await continueReadingNextSection(runId);
         return;
       }
 
-      const utterance = new SpeechSynthesisUtterance(speechChunks[speechChunkIndex]);
-      utterance.rate = Number(speechRate.value);
+      const chunk = speechChunks[speechChunkIndex];
+      try {
+        if (displayedSpeechCfi !== chunk.cfi) {
+          await rendition.display(chunk.cfi);
+          if (runId !== speechRunId || !speechActive) return;
+          displayedSpeechCfi = chunk.cfi;
+          updateReaderProgress();
+        }
+      } catch (error) {
+        if (runId !== speechRunId) return;
+        speechActive = false;
+        updateSpeechButtons();
+        speechStatus.textContent = 'Read aloud could not move to the next passage: ' + error.message;
+        console.error('Unable to follow the read-aloud position.', error);
+        return;
+      }
+
+      highlightSpeechSegment(chunk.segment);
+      updateSpeechProgress();
+      const utterance = new SpeechSynthesisUtterance(chunk.text);
+      utterance.rate = currentSpeechRate;
       const voice = window.speechSynthesis.getVoices().find(item => item.voiceURI === speechVoice.value);
       if (voice) utterance.voice = voice;
+      utterance.onboundary = event => {
+        if (runId !== speechRunId || event.name !== 'word') return;
+        highlightSpeechWord(chunk, event.charIndex);
+      };
       utterance.onend = () => {
         if (runId !== speechRunId) return;
         speechChunkIndex += 1;
@@ -1043,6 +1292,28 @@
         speechStatus.textContent = 'Read aloud stopped because speech playback failed: ' + event.error + '.';
       };
       window.speechSynthesis.speak(utterance);
+    }
+
+    function adjustSpeechRate(change) {
+      const rate = Math.round((currentSpeechRate + change) * 100) / 100;
+      speechRate.value = formatSpeechRate(rate);
+      applySpeechRate();
+    }
+
+    function formatSpeechRate(rate) {
+      return String(Number(rate.toFixed(2)));
+    }
+
+    function applySpeechRate() {
+      const rate = Number(speechRate.value);
+      if (!speechRate.value || !Number.isFinite(rate) || rate < 0.5 || rate > 3) {
+        speechRate.value = formatSpeechRate(currentSpeechRate);
+        speechStatus.textContent = 'Choose a speech speed from 0.5× to 3.0×.';
+        return;
+      }
+      currentSpeechRate = rate;
+      speechRateLabel.textContent = formatSpeechRate(rate) + '×';
+      saveReaderPreference('speechRate', rate);
     }
 
     function toggleSpeechPause() {
@@ -1064,6 +1335,7 @@
       speechChunks = [];
       speechChunkIndex = 0;
       if (speechSupported) window.speechSynthesis.cancel();
+      clearSpeechHighlight();
       updateSpeechButtons();
       if (message) speechStatus.textContent = message;
     }
@@ -1077,14 +1349,15 @@
 
     function initializeReaderSettings() {
       const preferences = loadReaderPreferences();
+      currentSpeechRate = preferences.speechRate;
+      speechRate.value = formatSpeechRate(currentSpeechRate);
+      speechRateLabel.textContent = formatSpeechRate(currentSpeechRate) + '×';
       if (preferences.theme === 'dark') document.body.classList.add('dark-ui');
       document.getElementById('theme-' + preferences.theme).classList.add('active');
       const fontId = 'font-' + preferences.fontFamily.split('-')[0];
       document.getElementById(fontId).classList.add('active');
 
-      speechRate.addEventListener('input', () => {
-        speechRateLabel.textContent = Number(speechRate.value).toFixed(1) + '×';
-      });
+      speechRate.addEventListener('change', applySpeechRate);
       if (speechSupported) {
         populateSpeechVoices();
         window.speechSynthesis.addEventListener('voiceschanged', populateSpeechVoices);

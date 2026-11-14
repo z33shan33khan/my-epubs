@@ -710,9 +710,16 @@
       bookNavigation = flattenNavigation(navigation.toc);
       buildTOC(navigation.toc);
 
+      rendition.on('rendered', (section, view) => {
+        const body = view.contents && view.contents.document.body;
+        if (body) body.addEventListener('click', handleSpeechTextClick);
+      });
       await rendition.display(loadSavedLocation(meta.file) || undefined);
       updateNavButtons();
       updateReaderProgress();
+      if (speechSupported) {
+        speechStatus.textContent = 'Click a paragraph to read from there, or use Read aloud to start from this page.';
+      }
       rendition.on('relocated', updateNavButtons);
       rendition.on('relocated', updateReaderProgress);
       document.addEventListener('keydown', handleKey);
@@ -1120,6 +1127,24 @@
       return chunks;
     }
 
+    function handleSpeechTextClick(event) {
+      if (!speechSupported || !rendition || !event.target) return;
+      const target = event.target.nodeType === 1 ? event.target : event.target.parentElement;
+      if (!target || !target.closest || target.closest('a, button, input, select, textarea, [contenteditable="true"]')) return;
+      const block = target.closest('p, h1, h2, h3, h4, h5, h6, blockquote, pre, li');
+      if (!block) return;
+
+      const content = rendition.getContents().find(item => item.document === event.currentTarget.ownerDocument);
+      if (!content) return;
+      const selection = content.window.getSelection();
+      if (selection && !selection.isCollapsed) return;
+
+      const range = content.document.createRange();
+      range.selectNodeContents(block);
+      range.collapse(true);
+      startReadingAloud(content.cfiFromRange(range));
+    }
+
     function ensureSpeechHighlightStyles(content) {
       const document = content.document;
       if (!document.querySelector('[data-my-epubs-speech-style]')) {
@@ -1189,7 +1214,7 @@
         ' · Chapter progress ' + chapterProgress + '%';
     }
 
-    function startReadingAloud() {
+    function startReadingAloud(startCfi = null) {
       if (!speechSupported) {
         speechStatus.textContent = 'Read aloud is not supported by this browser.';
         return;
@@ -1204,20 +1229,21 @@
       }
 
       const currentLocation = rendition.currentLocation();
-      const currentCfi = currentLocation && currentLocation.start && currentLocation.start.cfi;
+      const currentCfi = startCfi || (currentLocation && currentLocation.start && currentLocation.start.cfi);
       if (currentCfi) {
         const cfi = new ePub.CFI();
         speechChunks = speechChunks.filter(chunk => cfi.compare(chunk.cfi, currentCfi) >= 0);
       }
 
+      speechRunId += 1;
+      const runId = speechRunId;
       window.speechSynthesis.cancel();
       clearSpeechHighlight();
-      speechRunId += 1;
       speechChunkIndex = 0;
       speechActive = true;
       displayedSpeechCfi = null;
       updateSpeechButtons();
-      speakNextChunk(speechRunId);
+      speakNextChunk(runId);
     }
 
     async function continueReadingNextSection(runId) {

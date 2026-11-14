@@ -39,6 +39,7 @@
       display: flex;
       flex-direction: column;
       height: 100vh;
+      height: 100dvh;
       transition: background 0.3s, color 0.3s;
     }
     #passcode-gate {
@@ -215,7 +216,8 @@
       width: calc(100% - 2rem);
       max-width: 1080px;
       margin: 0 auto 1rem;
-      overflow: hidden;
+      overflow: auto;
+      overscroll-behavior: contain;
       background: var(--reader-surface);
       border: 1px solid var(--border-color);
       border-radius: 12px;
@@ -538,9 +540,22 @@
 
     @media (max-width: 700px) {
       header { padding: 0.8rem 1rem; }
-      #reader-controls { justify-content: center; }
+      #reader-controls {
+        justify-content: center;
+        gap: 0.4rem;
+        max-height: 42dvh;
+        padding: 0.5rem;
+        flex-shrink: 0;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+      }
       #reader-controls .spacer { display: none; }
-      .speech-controls { order: 3; }
+      #reader-controls .page-controls,
+      #reader-controls .speech-controls {
+        display: contents;
+      }
+      #reader-controls button { padding: 0.4rem 0.55rem; font-size: 0.82rem; }
+      #speech-highlight-mode { max-width: 7.5rem; }
       #speech-status { text-align: center; order: 4; }
       #viewer { width: calc(100% - 1rem); margin-bottom: 0.5rem; border-radius: 8px; }
       #reader-progress { width: calc(100% - 1.5rem); }
@@ -1220,7 +1235,8 @@
       rendition = book.renderTo('viewer', {
         width: '100%',
         height: '100%',
-        spread: 'none'
+        spread: 'none',
+        flow: 'scrolled-doc'
       });
       updateSpeechButtons();
 
@@ -1659,8 +1675,28 @@
     }
 
     // --- Page navigation ---
-    function prevPage() { if (rendition) rendition.prev(); }
-    function nextPage() { if (rendition) rendition.next(); }
+    function navigateReader(direction) {
+      if (!rendition) return;
+      const scroller = rendition.settings.flow === 'scrolled-doc'
+        ? viewerEl.querySelector('.epub-container')
+        : null;
+      if (scroller) {
+        const maxScrollTop = scroller.scrollHeight - scroller.clientHeight;
+        const nextScrollTop = Math.max(0, Math.min(
+          maxScrollTop,
+          scroller.scrollTop + direction * scroller.clientHeight
+        ));
+        if (nextScrollTop !== scroller.scrollTop) {
+          scroller.scrollTo({ top: nextScrollTop, behavior: 'smooth' });
+          return;
+        }
+      }
+      if (direction < 0) rendition.prev();
+      else rendition.next();
+    }
+
+    function prevPage() { navigateReader(-1); }
+    function nextPage() { navigateReader(1); }
 
     function updateNavButtons() {
       if (!rendition) return;

@@ -828,6 +828,71 @@
         file: "books/The%20Wheel%20of%20Time%20Books%201-14.epub",
         cover: generateCover("The Wheel of Time", "Books 1-14", "#11262E", "#484F54")
       },
+      {
+        title: "A Journey Of Black And Red",
+        file: "books/A%20Journey%20Of%20Black%20And%20Red.epub",
+        cover: generateCover("A Journey Of", "Black And Red", "#2b0b3f", "#9d174d")
+      },
+      {
+        title: "A Will Eternal",
+        file: "books/A%20Will%20Eternal.epub",
+        cover: generateCover("A Will", "Eternal", "#134e4a", "#22c55e")
+      },
+      {
+        title: "Archean Eon Art",
+        file: "books/Archean%20Eon%20Art.epub",
+        cover: generateCover("Archean Eon", "Art", "#0f172a", "#b45309")
+      },
+      {
+        title: "Beware Of Chicken",
+        file: "books/Beware%20Of%20Chicken.epub",
+        cover: generateCover("Beware Of", "Chicken", "#14532d", "#84cc16")
+      },
+      {
+        title: "Edgedancer",
+        file: "books/Edgedancer.epub",
+        cover: generateCover("Edgedancer", "", "#0369a1", "#7c3aed")
+      },
+      {
+        title: "Invincible",
+        file: "books/Invincible.epub",
+        cover: generateCover("Invincible", "", "#7f1d1d", "#f97316")
+      },
+      {
+        title: "Mother Of Learning",
+        file: "books/Mother%20Of%20Learning.epub",
+        cover: generateCover("Mother Of", "Learning", "#312e81", "#7c3aed")
+      },
+      {
+        title: "Oathbringer",
+        file: "books/Oathbringer.epub",
+        cover: generateCover("Oathbringer", "", "#1d4ed8", "#64748b")
+      },
+      {
+        title: "Pursuit of The Truth",
+        file: "books/Pursuit%20of%20The%20Truth.epub",
+        cover: generateCover("Pursuit of", "The Truth", "#111827", "#4b5563")
+      },
+      {
+        title: "Rhythm of War",
+        file: "books/Rhythm%20of%20War.epub",
+        cover: generateCover("Rhythm of", "War", "#7f1d1d", "#fca5a5")
+      },
+      {
+        title: "The Magus Era",
+        file: "books/The%20Magus%20Era.epub",
+        cover: generateCover("The Magus", "Era", "#3b0764", "#9333ea")
+      },
+      {
+        title: "The Way of Kings",
+        file: "books/The%20way%20of%20kings.epub",
+        cover: generateCover("The Way of", "Kings", "#0c4a6e", "#0ea5e9")
+      },
+      {
+        title: "Warlock of The Magus World",
+        file: "books/Warlock%20of%20The%20Magus%20World.epub",
+        cover: generateCover("Warlock of", "The Magus World", "#111827", "#7f1d1d")
+      },
     ];
 
     // ============================================================
@@ -2105,27 +2170,56 @@
       styledSpeechContents.forEach(content => ensureSpeechHighlightStyles(content));
     }
 
+    function getSpeechOverlayDocument(content) {
+      const frameElement = content.document.defaultView.frameElement;
+      return frameElement ? frameElement.ownerDocument : content.document;
+    }
+
     function drawSpeechRangeOverlay(content, range, color, type) {
-      const document = content.document;
-      const view = document.defaultView;
-      let overlay = document.querySelector('[data-my-epubs-speech-overlays]');
+      const frameElement = content.document.defaultView.frameElement;
+      const overlayDocument = frameElement ? frameElement.ownerDocument : content.document;
+      const frameRect = frameElement && frameElement.getBoundingClientRect();
+      const scaleX = frameRect && frameElement.offsetWidth ? frameRect.width / frameElement.offsetWidth : 1;
+      const scaleY = frameRect && frameElement.offsetHeight ? frameRect.height / frameElement.offsetHeight : 1;
+      const frameLeft = frameRect ? frameRect.left + frameElement.clientLeft * scaleX : 0;
+      const frameTop = frameRect ? frameRect.top + frameElement.clientTop * scaleY : 0;
+      let clipLeft = frameLeft;
+      let clipTop = frameTop;
+      let clipRight = frameRect ? frameLeft + frameElement.clientWidth * scaleX : Infinity;
+      let clipBottom = frameRect ? frameTop + frameElement.clientHeight * scaleY : Infinity;
+      const viewer = frameElement && overlayDocument.getElementById('viewer');
+      if (viewer) {
+        const viewerRect = viewer.getBoundingClientRect();
+        clipLeft = Math.max(clipLeft, viewerRect.left + viewer.clientLeft);
+        clipTop = Math.max(clipTop, viewerRect.top + viewer.clientTop);
+        clipRight = Math.min(clipRight, viewerRect.left + viewer.clientLeft + viewer.clientWidth);
+        clipBottom = Math.min(clipBottom, viewerRect.top + viewer.clientTop + viewer.clientHeight);
+      }
+      let overlay = overlayDocument.querySelector('[data-my-epubs-speech-overlays]');
       if (!overlay) {
-        overlay = document.createElement('div');
+        overlay = overlayDocument.createElement('div');
         overlay.setAttribute('data-my-epubs-speech-overlays', '');
         overlay.style.cssText =
-          'position:absolute;left:0;top:0;width:100%;height:100%;overflow:visible;pointer-events:none;z-index:2147483647';
-        document.body.appendChild(overlay);
+          'position:fixed;inset:0;overflow:visible;pointer-events:none;z-index:2147483647';
+        overlayDocument.documentElement.appendChild(overlay);
       }
 
       Array.from(range.getClientRects()).forEach(rect => {
         if (!rect.width || !rect.height) return;
-        const marker = document.createElement('span');
+        const marker = overlayDocument.createElement('span');
+        const rectLeft = frameLeft + rect.left * scaleX;
+        const rectTop = frameTop + rect.top * scaleY;
+        const left = Math.max(rectLeft, clipLeft);
+        const top = Math.max(rectTop, clipTop);
+        const right = Math.min(rectLeft + rect.width * scaleX, clipRight);
+        const bottom = Math.min(rectTop + rect.height * scaleY, clipBottom);
+        if (right <= left || bottom <= top) return;
         marker.style.cssText =
           'position:absolute;pointer-events:none;border-radius:2px;background-color:' + color +
           ';opacity:' + (type === 'line' ? '0.32' : '0.55') +
-          ';left:' + (rect.left + view.scrollX) + 'px' +
-          ';top:' + (rect.top + view.scrollY) + 'px' +
-          ';width:' + rect.width + 'px;height:' + rect.height + 'px';
+          ';left:' + left + 'px' +
+          ';top:' + top + 'px' +
+          ';width:' + (right - left) + 'px;height:' + (bottom - top) + 'px';
         overlay.appendChild(marker);
       });
     }
@@ -2170,7 +2264,7 @@
         view.CSS.highlights.delete('my-epubs-speech-line');
         view.CSS.highlights.delete('my-epubs-speech-word');
       }
-      const overlay = content.document.querySelector('[data-my-epubs-speech-overlays]');
+      const overlay = getSpeechOverlayDocument(content).querySelector('[data-my-epubs-speech-overlays]');
       if (overlay) overlay.replaceChildren();
     }
 

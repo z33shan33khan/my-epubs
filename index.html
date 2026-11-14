@@ -1203,6 +1203,13 @@
         return;
       }
 
+      const currentLocation = rendition.currentLocation();
+      const currentCfi = currentLocation && currentLocation.start && currentLocation.start.cfi;
+      if (currentCfi) {
+        const cfi = new ePub.CFI();
+        speechChunks = speechChunks.filter(chunk => cfi.compare(chunk.cfi, currentCfi) >= 0);
+      }
+
       window.speechSynthesis.cancel();
       clearSpeechHighlight();
       speechRunId += 1;

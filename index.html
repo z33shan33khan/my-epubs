@@ -41,6 +41,64 @@
       height: 100vh;
       transition: background 0.3s, color 0.3s;
     }
+    #passcode-gate {
+      position: fixed;
+      inset: 0;
+      z-index: 10000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+      background: rgba(15, 18, 24, 0.82);
+    }
+    #passcode-gate[hidden] { display: none; }
+    #passcode-dialog {
+      width: min(100%, 24rem);
+      padding: 1.5rem;
+      border: 1px solid var(--border-color);
+      border-radius: 14px;
+      background: var(--panel-bg);
+      color: var(--text-color);
+      box-shadow: 0 16px 48px rgba(0,0,0,0.28);
+    }
+    #passcode-dialog h2 { margin-bottom: 0.5rem; }
+    #passcode-warning, #passcode-message, #passcode-setup {
+      margin-top: 0.75rem;
+      font-size: 0.85rem;
+      line-height: 1.45;
+    }
+    #passcode-warning, #passcode-setup { color: #a34a00; }
+    #passcode-form { margin-top: 1rem; }
+    #passcode-form label {
+      display: block;
+      margin-bottom: 0.4rem;
+      font-weight: 600;
+    }
+    #passcode-input {
+      width: 100%;
+      padding: 0.7rem;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      background: var(--bg-color);
+      color: var(--text-color);
+      font: inherit;
+    }
+    #passcode-submit {
+      width: 100%;
+      margin-top: 0.75rem;
+      padding: 0.7rem 1rem;
+      border: 0;
+      border-radius: 8px;
+      background: var(--accent-color);
+      color: #fff;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    #passcode-submit:disabled, #passcode-input:disabled {
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
 
     header {
       background: var(--panel-bg);
@@ -69,6 +127,36 @@
       flex: 1;
       overflow-y: auto;
       padding: 2rem;
+    }
+    .library-search {
+      max-width: 600px;
+      margin: 0 auto 2rem;
+    }
+    .library-search label {
+      display: block;
+      margin-bottom: 0.5rem;
+      color: var(--text-color);
+      font-weight: 600;
+    }
+    #book-search {
+      box-sizing: border-box;
+      width: 100%;
+      padding: 0.8rem 1rem;
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      background: var(--panel-bg);
+      color: var(--text-color);
+      font: inherit;
+    }
+    #book-search:focus {
+      outline: 2px solid var(--accent-color);
+      outline-offset: 2px;
+    }
+    #no-books-found {
+      display: none;
+      margin: 2rem auto;
+      color: var(--text-color);
+      text-align: center;
     }
     .book-grid {
       display: grid;
@@ -351,6 +439,12 @@
       color: #77777c;
       font-size: 0.8rem;
     }
+    #cover-folder-status {
+      display: block;
+      margin: 0.4rem 0;
+      color: #77777c;
+      font-size: 0.8rem;
+    }
     .speech-rate-control {
       display: flex;
       align-items: center;
@@ -455,6 +549,25 @@
 </head>
 <body>
 
+  <div id="passcode-gate" role="dialog" aria-modal="true" aria-labelledby="passcode-title">
+    <div id="passcode-dialog">
+      <h2 id="passcode-title">Library sign in</h2>
+      <p>Enter the shared passcode to continue.</p>
+      <p id="passcode-warning">
+        This is only a casual screen. It does not protect direct EPUB links or replace private hosting.
+      </p>
+      <form id="passcode-form">
+        <label for="passcode-input">Shared passcode</label>
+        <input id="passcode-input" type="password" autocomplete="current-password" required>
+        <button id="passcode-submit" type="submit">Continue</button>
+      </form>
+      <p id="passcode-message" role="status" aria-live="polite"></p>
+      <p id="passcode-setup" hidden>
+        The owner must configure a passcode hash in index.html before publishing this page.
+      </p>
+    </div>
+  </div>
+
   <header>
     <h1 id="header-title">📚 My EPUB Collection</h1>
     <button class="back-btn" id="back-btn" onclick="showLibrary()">← Back to Library</button>
@@ -463,6 +576,11 @@
   <!-- Library view -->
   <div id="library-view">
     <div id="loading">Loading your collection…</div>
+    <div class="library-search">
+      <label for="book-search">Search books</label>
+      <input id="book-search" type="search" placeholder="Search books by title…" autocomplete="off">
+    </div>
+    <div id="no-books-found" role="status" aria-live="polite">No books match your search.</div>
     <div class="book-grid" id="book-grid"></div>
   </div>
 
@@ -543,8 +661,14 @@
       <div>
         <h3>Book Cover</h3>
         <div class="setting-row">
+          <button type="button" id="cover-folder-btn" onclick="chooseRepoCoverFolder()">Choose repo covers folder</button>
+        </div>
+        <small id="cover-folder-status" role="status" aria-live="polite">
+          Choose the repository's covers/ folder once to save detected covers there.
+        </small>
+        <div class="setting-row">
           <button type="button" id="embedded-cover-btn" onclick="useEmbeddedBookCover()" disabled>
-            Detect from EPUB
+            Detect and save cover
           </button>
         </div>
         <div id="cover-status" role="status" aria-live="polite"></div>
@@ -700,16 +824,29 @@
     let currentBookFile = null;
     let currentBookTitle = '';
     let bookNavigation = [];
+    let repoCoverManifest = {};
+    let repoCoversDirectoryHandle = null;
     const READER_THEME_COLORS = {
       light: { background: '#ffffff', text: '#1d1d1f' },
       sepia: { background: '#f4ecd8', text: '#5b4636' },
       dark: { background: '#121212', text: '#e0e0e0' }
     };
     const DEFAULT_CHARACTER_GENDERS = 'Chu Fang = he/his/him\nCai Lin = she/her';
+    const LIBRARY_PASSCODE_SALT = '47379e162ce88f72a05569f5e7ce4476';
+    const LIBRARY_PASSCODE_VERIFIER = 'c94ecbdb0ae27345d5de44a9cff34b9037be0d92011a390b80f30abb075460e1';
+    const LIBRARY_PASSCODE_ITERATIONS = 310000;
 
     const libraryView = document.getElementById('library-view');
     const readerView  = document.getElementById('reader-view');
     const bookGrid    = document.getElementById('book-grid');
+    const bookSearch  = document.getElementById('book-search');
+    const noBooksFound = document.getElementById('no-books-found');
+    const passcodeGate = document.getElementById('passcode-gate');
+    const passcodeForm = document.getElementById('passcode-form');
+    const passcodeInput = document.getElementById('passcode-input');
+    const passcodeSubmit = document.getElementById('passcode-submit');
+    const passcodeMessage = document.getElementById('passcode-message');
+    const passcodeSetup = document.getElementById('passcode-setup');
     const loadingEl   = document.getElementById('loading');
     const headerTitle = document.getElementById('header-title');
     const backBtn     = document.getElementById('back-btn');
@@ -719,6 +856,8 @@
     const settingsPanel = document.getElementById('settings-panel');
     const embeddedCoverBtn = document.getElementById('embedded-cover-btn');
     const coverStatus = document.getElementById('cover-status');
+    const coverFolderBtn = document.getElementById('cover-folder-btn');
+    const coverFolderStatus = document.getElementById('cover-folder-status');
     
     // TOC Elements
     const tocDrawer = document.getElementById('toc-drawer');
@@ -759,8 +898,12 @@
     function buildLibrary() {
       loadingEl.style.display = 'none';
       bookGrid.innerHTML = '';
+      const query = bookSearch.value.trim().toLocaleLowerCase();
+      let matchingBooks = 0;
 
       BOOKS.forEach((b, index) => {
+        if (!b.title.toLocaleLowerCase().includes(query)) return;
+        matchingBooks += 1;
         const card = document.createElement('div');
         card.className = 'book-card';
         card.onclick = () => openBook(index);
@@ -768,7 +911,7 @@
         const cover = document.createElement('img');
         cover.className = 'cover';
         cover.alt = b.title;
-        cover.src = loadSavedBookCover(b.file) || b.cover;
+        cover.src = getRepoCoverUrl(b.file) || loadSavedBookCover(b.file) || b.cover;
         card.dataset.bookFile = b.file;
 
         const title = document.createElement('div');
@@ -779,6 +922,181 @@
         card.appendChild(title);
         bookGrid.appendChild(card);
       });
+      noBooksFound.style.display = matchingBooks ? 'none' : 'block';
+    }
+
+    function getRepoCoverUrl(file) {
+      const filename = repoCoverManifest[file];
+      if (typeof filename !== 'string' || !/^[a-z0-9-]+\.(?:jpg|jpeg|png|webp|gif|svg|avif)$/i.test(filename)) {
+        return null;
+      }
+      return new URL('covers/' + encodeURIComponent(filename), document.baseURI).href;
+    }
+
+    async function loadRepoCoverManifest() {
+      try {
+        const response = await fetch(new URL('covers/manifest.json', document.baseURI));
+        if (response.status === 404) {
+          repoCoverManifest = {};
+          return;
+        }
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const manifest = await response.json();
+        if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
+          throw new Error('The cover manifest must be a JSON object.');
+        }
+        repoCoverManifest = manifest;
+      } catch (error) {
+        console.error('Unable to load repository covers; using browser-saved or generated covers.', error);
+        repoCoverManifest = {};
+      }
+    }
+
+    function openCoverSettingsDatabase() {
+      return new Promise((resolve, reject) => {
+        const request = indexedDB.open('my-epubs-cover-settings', 1);
+        request.onupgradeneeded = () => {
+          request.result.createObjectStore('settings');
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error || new Error('Could not open cover settings storage.'));
+      });
+    }
+
+    async function getSavedCoverDirectory() {
+      const database = await openCoverSettingsDatabase();
+      return new Promise((resolve, reject) => {
+        const transaction = database.transaction('settings', 'readonly');
+        const request = transaction.objectStore('settings').get('repo-covers-directory');
+        let handle = null;
+        request.onsuccess = () => { handle = request.result || null; };
+        request.onerror = () => reject(request.error || new Error('Could not read the saved repository folder.'));
+        transaction.oncomplete = () => {
+          database.close();
+          resolve(handle);
+        };
+        transaction.onerror = () => {
+          database.close();
+          reject(transaction.error || new Error('Could not read the saved repository folder.'));
+        };
+      });
+    }
+
+    async function saveCoverDirectory(handle) {
+      const database = await openCoverSettingsDatabase();
+      return new Promise((resolve, reject) => {
+        const transaction = database.transaction('settings', 'readwrite');
+        transaction.objectStore('settings').put(handle, 'repo-covers-directory');
+        transaction.oncomplete = () => {
+          database.close();
+          resolve();
+        };
+        transaction.onerror = () => {
+          database.close();
+          reject(transaction.error || new Error('Could not remember the repository covers folder.'));
+        };
+      });
+    }
+
+    async function initializeCoverFolderPicker() {
+      if (!window.isSecureContext || !window.showDirectoryPicker || !window.indexedDB) {
+        coverFolderBtn.disabled = true;
+        coverFolderStatus.textContent = 'Repository saving needs Chrome or Edge on HTTPS or localhost.';
+        return;
+      }
+      try {
+        repoCoversDirectoryHandle = await getSavedCoverDirectory();
+        coverFolderStatus.textContent = repoCoversDirectoryHandle
+          ? 'Repository folder remembered: ' + repoCoversDirectoryHandle.name + '.'
+          : "Choose the repository's covers/ folder to save detected covers there.";
+      } catch (error) {
+        coverFolderStatus.textContent = 'Could not restore the repository folder: ' + error.message;
+        console.error('Unable to restore the repository covers folder.', error);
+      }
+    }
+
+    async function chooseRepoCoverFolder() {
+      if (!window.showDirectoryPicker || !window.isSecureContext) {
+        coverFolderStatus.textContent = 'Repository saving needs Chrome or Edge on HTTPS or localhost.';
+        return;
+      }
+      try {
+        const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+        const permission = await handle.requestPermission({ mode: 'readwrite' });
+        if (permission !== 'granted') {
+          coverFolderStatus.textContent = 'Write access was not granted. Choose the covers/ folder again to retry.';
+          return;
+        }
+        await saveCoverDirectory(handle);
+        repoCoversDirectoryHandle = handle;
+        coverFolderStatus.textContent = 'Repository covers folder selected: ' + handle.name + '.';
+      } catch (error) {
+        if (error.name === 'AbortError') {
+          coverFolderStatus.textContent = 'Folder selection canceled.';
+          return;
+        }
+        coverFolderStatus.textContent = 'Could not select the repository folder: ' + error.message;
+        console.error('Unable to select the repository covers folder.', error);
+      }
+    }
+
+    function getCoverExtension(blob) {
+      const extensions = {
+        'image/jpeg': 'jpg',
+        'image/png': 'png',
+        'image/webp': 'webp',
+        'image/gif': 'gif',
+        'image/svg+xml': 'svg',
+        'image/avif': 'avif'
+      };
+      const extension = extensions[blob.type.toLowerCase()];
+      if (!extension) throw new Error('The embedded cover format is not supported for repository saving.');
+      return extension;
+    }
+
+    function getCoverFilenameBase(title) {
+      return title.toLowerCase()
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '') || 'book-cover';
+    }
+
+    async function readCoverManifestFromDirectory(directory) {
+      try {
+        const handle = await directory.getFileHandle('manifest.json');
+        const manifest = JSON.parse(await (await handle.getFile()).text());
+        if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
+          throw new Error('The repository cover manifest must be a JSON object.');
+        }
+        return manifest;
+      } catch (error) {
+        if (error.name === 'NotFoundError') return {};
+        throw error;
+      }
+    }
+
+    async function writeCoverFile(directory, filename, blob) {
+      const handle = await directory.getFileHandle(filename, { create: true });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+    }
+
+    async function saveCoverToRepository(directory, file, title, blob) {
+      const permission = await directory.queryPermission({ mode: 'readwrite' });
+      if (permission !== 'granted') {
+        throw new Error('Repository write access expired. Choose the covers/ folder again.');
+      }
+      const filename = getCoverFilenameBase(title) + '.' + getCoverExtension(blob);
+      const manifest = await readCoverManifestFromDirectory(directory);
+      await writeCoverFile(directory, filename, blob);
+      manifest[file] = filename;
+      await writeCoverFile(directory, 'manifest.json', new Blob([JSON.stringify(manifest, null, 2) + '\n'], {
+        type: 'application/json'
+      }));
+      repoCoverManifest = manifest;
+      return filename;
     }
 
     function loadSavedBookCover(file) {
@@ -806,9 +1124,24 @@
       if (!book || !currentBookFile) return;
       const targetBook = book;
       const targetFile = currentBookFile;
+      const targetTitle = currentBookTitle;
+      const targetDirectory = repoCoversDirectoryHandle;
       embeddedCoverBtn.disabled = true;
       coverStatus.textContent = 'Searching the EPUB for a cover...';
       try {
+        let repositorySaveError = null;
+        if (targetDirectory) {
+          try {
+            const permission = await targetDirectory.queryPermission({ mode: 'readwrite' });
+            if (permission !== 'granted') {
+              repositorySaveError = new Error('Repository write access expired. Choose the covers/ folder again.');
+            }
+          } catch (error) {
+            repositorySaveError = error;
+            console.error('Unable to verify repository cover-folder access.', error);
+          }
+        }
+
         const coverUrl = await targetBook.coverUrl();
         if (!coverUrl) {
           if (currentBookFile === targetFile) coverStatus.textContent = 'This EPUB does not contain a cover image.';
@@ -817,8 +1150,22 @@
 
         const response = await fetch(coverUrl);
         if (!response.ok) throw new Error('The embedded cover image could not be loaded.');
-        const coverDataUrl = await readBlobAsDataURL(await response.blob());
-        localStorage.setItem('my-epubs-cover:' + targetFile, coverDataUrl);
+        const coverBlob = await response.blob();
+        const coverDataUrl = await readBlobAsDataURL(coverBlob);
+        let repositoryFilename = null;
+        if (targetDirectory && !repositorySaveError) {
+          try {
+            repositoryFilename = await saveCoverToRepository(targetDirectory, targetFile, targetTitle, coverBlob);
+          } catch (error) {
+            repositorySaveError = error;
+            console.error('Unable to save the embedded cover in the repository.', error);
+          }
+        }
+        try {
+          localStorage.setItem('my-epubs-cover:' + targetFile, coverDataUrl);
+        } catch (error) {
+          console.warn('Unable to save the embedded cover in this browser.', error);
+        }
 
         const bookIndex = BOOKS.findIndex(item => item.file === targetFile);
         if (bookIndex >= 0) BOOKS[bookIndex].cover = coverDataUrl;
@@ -826,7 +1173,17 @@
           .find(item => item.dataset.bookFile === targetFile);
         const image = card && card.querySelector('.cover');
         if (image) image.src = coverDataUrl;
-        if (currentBookFile === targetFile) coverStatus.textContent = 'Embedded cover saved for this book.';
+        if (currentBookFile === targetFile) {
+          if (repositoryFilename) {
+            coverStatus.textContent = 'Cover saved to covers/' + repositoryFilename +
+              '. Commit the covers/ folder to keep it in the repository.';
+          } else if (repositorySaveError) {
+            coverStatus.textContent = 'Cover saved only in this browser. Repository saving failed: ' +
+              repositorySaveError.message;
+          } else {
+            coverStatus.textContent = 'Cover saved only in this browser. Choose the repository covers/ folder to save it permanently.';
+          }
+        }
       } catch (error) {
         if (currentBookFile === targetFile) coverStatus.textContent = 'Could not use the embedded cover: ' + error.message;
         console.error('Unable to apply the embedded EPUB cover.', error);
@@ -1988,6 +2345,78 @@
       if (!speechActive) speechPauseBtn.textContent = 'Pause';
     }
 
+    function decodeHexBytes(hex) {
+      const bytes = new Uint8Array(hex.length / 2);
+      for (let index = 0; index < bytes.length; index += 1) {
+        bytes[index] = parseInt(hex.slice(index * 2, index * 2 + 2), 16);
+      }
+      return bytes;
+    }
+
+    async function derivePasscodeVerifier(passcode) {
+      const key = await crypto.subtle.importKey(
+        'raw',
+        new TextEncoder().encode(passcode),
+        'PBKDF2',
+        false,
+        ['deriveBits']
+      );
+      const derivedBits = await crypto.subtle.deriveBits({
+        name: 'PBKDF2',
+        salt: decodeHexBytes(LIBRARY_PASSCODE_SALT),
+        iterations: LIBRARY_PASSCODE_ITERATIONS,
+        hash: 'SHA-256'
+      }, key, 256);
+      return Array.from(new Uint8Array(derivedBits), byte => byte.toString(16).padStart(2, '0')).join('');
+    }
+
+    function passcodeVerifiersMatch(candidate, expected) {
+      if (candidate.length !== expected.length) return false;
+      let difference = 0;
+      for (let index = 0; index < candidate.length; index += 1) {
+        difference |= candidate.charCodeAt(index) ^ expected.charCodeAt(index);
+      }
+      return difference === 0;
+    }
+
+    function initializePasscodeGate() {
+      passcodeForm.addEventListener('submit', async event => {
+        event.preventDefault();
+        passcodeSubmit.disabled = true;
+        passcodeMessage.textContent = '';
+        try {
+          const candidate = await derivePasscodeVerifier(passcodeInput.value);
+          if (!passcodeVerifiersMatch(candidate, LIBRARY_PASSCODE_VERIFIER)) {
+            passcodeMessage.textContent = 'That passcode is not correct.';
+            passcodeInput.value = '';
+            passcodeInput.focus();
+            return;
+          }
+          try {
+            sessionStorage.setItem('my-epubs-passcode-unlocked', 'true');
+          } catch (error) {
+            console.warn('The unlocked state could not be remembered for this tab.', error);
+          }
+          passcodeGate.hidden = true;
+        } catch (error) {
+          passcodeMessage.textContent = 'Passcode verification is unavailable in this browser context.';
+          console.error('Unable to verify the library passcode.', error);
+        } finally {
+          passcodeSubmit.disabled = false;
+        }
+      });
+
+      try {
+        if (sessionStorage.getItem('my-epubs-passcode-unlocked') === 'true') {
+          passcodeGate.hidden = true;
+          return;
+        }
+      } catch (error) {
+        console.warn('The unlocked state could not be restored for this tab.', error);
+      }
+      passcodeInput.focus();
+    }
+
     function initializeReaderSettings() {
       const preferences = loadReaderPreferences();
       setReaderColorInputs(preferences);
@@ -2044,8 +2473,11 @@
       updateSpeechButtons();
     }
 
+    initializePasscodeGate();
     initializeReaderSettings();
-    buildLibrary();
+    bookSearch.addEventListener('input', buildLibrary);
+    initializeCoverFolderPicker();
+    loadRepoCoverManifest().then(buildLibrary);
   </script>
 </body>
 </html>

@@ -2811,14 +2811,6 @@
 
     function initializeReaderSettings() {
       const preferences = loadReaderPreferences();
-      if (preferences.theme !== 'light') {
-        preferences.theme = 'light';
-        preferences.pageBackground = READER_THEME_COLORS.light.background;
-        preferences.pageText = READER_THEME_COLORS.light.text;
-        saveReaderPreference('theme', preferences.theme);
-        saveReaderPreference('pageBackground', preferences.pageBackground);
-        saveReaderPreference('pageText', preferences.pageText);
-      }
       setReaderColorInputs(preferences);
       applyReaderColors();
       currentSpeechRate = preferences.speechRate;

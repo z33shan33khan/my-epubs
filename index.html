@@ -1362,6 +1362,7 @@
       });
 
       const preferences = loadReaderPreferences();
+      syncBodyThemeClass(preferences.theme);
       setReaderColorInputs(preferences);
       rendition.themes.select(preferences.theme);
       rendition.themes.fontSize(currentFontSize + '%');
@@ -1622,17 +1623,16 @@
       }
     }
 
+    function syncBodyThemeClass(theme) {
+      const isDark = theme === 'dark';
+      document.body.classList.toggle('dark-ui', isDark);
+    }
+
     function setTheme(theme) {
       if (!rendition) return;
       rendition.themes.select(theme);
-      
-      if (theme === 'dark') {
-        document.body.classList.add('dark-ui');
-        updateSettingUI(theme, null);
-      } else {
-        document.body.classList.remove('dark-ui');
-        updateSettingUI(theme, null);
-      }
+      syncBodyThemeClass(theme);
+      updateSettingUI(theme, null);
       saveReaderPreference('theme', theme);
       pageBackgroundColor.value = READER_THEME_COLORS[theme].background;
       pageTextColor.value = READER_THEME_COLORS[theme].text;

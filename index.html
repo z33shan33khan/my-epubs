@@ -916,6 +916,19 @@
     let bookNavigation = [];
     let repoCoverManifest = {};
     let repoCoversDirectoryHandle = null;
+    // Mobile Chrome sends no word-boundary events from speechSynthesis, so the
+    // word/line highlight is estimated from elapsed time, calibrated on the real
+    // durations of the chunks that were actually spoken.
+    const isMobileSpeech = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
+    let speechMsPerCharBase = 0;
+    let speechFallbackTimer = null;
+    let speechChunkSpokenAt = 0;
+    let speechWatchdogTimer = null;
+    let activeSpeechUtterance = null;
+    let speechHiddenPause = false;
+    let speechResumeChunkIndex = null;
+    let speechWakeLock = null;
+    let navLockAt = 0;
     const READER_THEME_COLORS = {
       light: { background: '#ffffff', text: '#1d1d1f' },
       sepia: { background: '#f4ecd8', text: '#5b4636' },
@@ -1313,6 +1326,16 @@
         spread: 'none',
         flow: 'scrolled-doc'
       });
+      /* epub.js drives its render queue with requestAnimationFrame, which stops
+         firing whenever the page is not actively rendering — tab in the
+         background or the phone screen off. Queued page turns then stay stuck
+         until the page is visible again and all run at once, which can crash
+         mobile Chrome. Drive the queue with a timeout instead so it keeps
+         processing while hidden. */
+      rendition.q.tick = fn => setTimeout(fn, 0);
+      /* Bootstrap a timer-driven pass: the constructor already queued its first
+         rAF-driven pass, which stays frozen while the page is not rendering. */
+      rendition.q.run();
       updateSpeechButtons();
 
       // Register Themes
@@ -1359,6 +1382,8 @@
         const body = view.contents && view.contents.document.body;
         if (view.contents) applyReaderColors(view.contents);
         if (body) body.addEventListener('click', handleSpeechTextClick);
+        const overlay = document.querySelector('[data-my-epubs-speech-overlays]');
+        if (overlay) overlay.replaceChildren();
       });
       await rendition.display(loadSavedLocation(meta.file) || undefined);
       updateNavButtons();
@@ -1761,6 +1786,12 @@
     // --- Page navigation ---
     function navigateReader(direction) {
       if (!rendition) return;
+      /* Rapid taps recreate epub.js iframe views faster than Android can
+         reclaim them, which can crash mobile Chrome — ignore taps in quick
+         succession. */
+      const now = Date.now();
+      if (now - navLockAt < 400) return;
+      navLockAt = now;
       const scroller = rendition.settings.flow === 'scrolled-doc'
         ? viewerEl.querySelector('.epub-container')
         : null;
@@ -2263,11 +2294,120 @@
       const activeTop = frameRect.top + rangeRect.top;
       const activeBottom = activeTop + rangeRect.height;
       const viewportHeight = scroller.clientHeight;
-      if (activeTop < viewportTop + viewportHeight * 0.25 ||
-          activeBottom > viewportTop + viewportHeight * 0.7) {
-        scroller.scrollTop += activeTop - (viewportTop + viewportHeight * 0.4);
+      /* The voice reads down the visible screen; as soon as the line being read
+         runs past the last visible line — or ended up above the viewport after
+         the reader scrolled — shift the page so that line starts at the top. */
+      if (activeTop < viewportTop || activeBottom > viewportTop + viewportHeight * 0.92) {
+        scroller.scrollTop += activeTop - viewportTop - 8;
       }
     }
+
+    /* In scrolled flow the page follows the voice by scrolling (see
+       keepSpeechRangeVisible). Only a full display() — which recreates iframe
+       views and can crash mobile Chrome — when the chunk is far outside the
+       visible page. */
+    function isSpeechChunkNearViewport(chunk) {
+      if (!rendition || rendition.settings.flow !== 'scrolled-doc') return false;
+      try {
+        const scroller = viewerEl.querySelector('.epub-container');
+        const frame = chunk.segment.content.document.defaultView.frameElement;
+        if (!scroller || !frame) return false;
+        const range = createSpeechRange(chunk.segment, chunk.start, chunk.start + chunk.text.length);
+        if (!range) return false;
+        const scrollerRect = scroller.getBoundingClientRect();
+        const frameRect = frame.getBoundingClientRect();
+        const rangeRect = range.getBoundingClientRect();
+        const top = frameRect.top + rangeRect.top;
+        const bottom = top + rangeRect.height;
+        const viewTop = scrollerRect.top + scroller.clientTop;
+        const viewBottom = viewTop + scroller.clientHeight;
+        return top < viewBottom + scroller.clientHeight && bottom > viewTop - scroller.clientHeight;
+      } catch (error) {
+        return false;
+      }
+    }
+
+    /* Android Chrome normally sends no word-boundary events, so estimate the
+       word being spoken from elapsed time so the highlight keeps moving there. */
+    function startSpeechFallbackTimer(chunk, runId) {
+      stopSpeechFallbackTimer();
+      const rate = Math.max(0.5, currentSpeechRate) || 1;
+      const perChar = (speechMsPerCharBase > 15 ? speechMsPerCharBase : 58) / rate;
+      const startedAt = speechChunkSpokenAt || performance.now();
+      speechFallbackTimer = setInterval(() => {
+        if (runId !== speechRunId || !speechActive) { stopSpeechFallbackTimer(); return; }
+        const charIndex = Math.floor((performance.now() - startedAt) / perChar);
+        if (charIndex < chunk.text.length) highlightSpeechWord(chunk, charIndex);
+      }, 120);
+    }
+
+    function stopSpeechFallbackTimer() {
+      if (speechFallbackTimer) { clearInterval(speechFallbackTimer); speechFallbackTimer = null; }
+    }
+
+    function calibrateSpeechSpeed(chunk, elapsedMs) {
+      if (!elapsedMs || elapsedMs < 1000 || chunk.text.length < 40) return;
+      const ms = elapsedMs / chunk.text.length * Math.max(0.5, currentSpeechRate);
+      if (Number.isFinite(ms) && ms > 5 && ms < 400) {
+        speechMsPerCharBase = speechMsPerCharBase ? speechMsPerCharBase * 0.75 + ms * 0.25 : ms;
+      }
+    }
+
+    /* Cancel() followed straight by speak() fails silently on some Android
+       engines — give it a beat when something is still in the queue. */
+    function speakWhenIdle(runId) {
+      if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
+        setTimeout(() => {
+          if (runId === speechRunId && speechActive && !speechHiddenPause) speakNextChunk(runId);
+        }, isMobileSpeech ? 260 : 60);
+      } else {
+        speakNextChunk(runId);
+      }
+    }
+
+    /* Keep the screen awake while read-aloud runs so Android does not kill the
+       session mid-chapter. */
+    async function requestSpeechWakeLock() {
+      if (!speechActive || !navigator.wakeLock || speechWakeLock) return;
+      try {
+        speechWakeLock = await navigator.wakeLock.request('screen');
+        speechWakeLock.addEventListener('release', () => { speechWakeLock = null; });
+      } catch (error) { /* the wake lock is optional */ }
+    }
+
+    function releaseSpeechWakeLock() {
+      if (speechWakeLock) { try { speechWakeLock.release(); } catch (error) { /* already released */ } speechWakeLock = null; }
+    }
+
+    /* Pause read-aloud while the page is hidden and resume when it comes back. */
+    function pauseSpeechForHiddenPage() {
+      if (!speechActive || speechHiddenPause) return;
+      speechHiddenPause = true;
+      speechResumeChunkIndex = speechChunkIndex;
+      stopSpeechFallbackTimer();
+      clearTimeout(speechWatchdogTimer);
+      speechRunId += 1; /* invalidate pending onend/onerror callbacks */
+      window.speechSynthesis.cancel();
+      clearSpeechHighlight();
+      speechStatus.textContent = 'Read aloud paused while away from the page — it resumes when you return.';
+    }
+
+    function resumeSpeechFromHiddenPage() {
+      if (!speechHiddenPause) return;
+      speechHiddenPause = false;
+      if (!speechActive) return;
+      speechRunId += 1;
+      if (speechResumeChunkIndex !== null) speechChunkIndex = speechResumeChunkIndex;
+      speechResumeChunkIndex = null;
+      requestSpeechWakeLock();
+      speakWhenIdle(speechRunId);
+    }
+
+    document.addEventListener('visibilitychange', () => {
+      if (!speechSupported) return;
+      if (document.hidden) pauseSpeechForHiddenPage();
+      else resumeSpeechFromHiddenPage();
+    });
 
     function getSpeechLineRange(segment, index) {
       const sourceIndex = segment.sourceIndexes[index];
@@ -2395,9 +2535,12 @@
       clearSpeechHighlight();
       speechChunkIndex = 0;
       speechActive = true;
+      speechHiddenPause = false;
+      speechResumeChunkIndex = null;
       displayedSpeechCfi = null;
       updateSpeechButtons();
-      speakNextChunk(runId);
+      requestSpeechWakeLock();
+      speakWhenIdle(runId);
     }
 
     async function continueReadingNextSection(runId) {
@@ -2442,7 +2585,7 @@
 
       const chunk = speechChunks[speechChunkIndex];
       try {
-        if (displayedSpeechCfi !== chunk.cfi) {
+        if (displayedSpeechCfi !== chunk.cfi && !isSpeechChunkNearViewport(chunk)) {
           await rendition.display(chunk.cfi);
           if (runId !== speechRunId || !speechActive) return;
           displayedSpeechCfi = chunk.cfi;
@@ -2469,20 +2612,44 @@
       if (voice) utterance.voice = voice;
       utterance.onboundary = event => {
         if (runId !== speechRunId || event.name !== 'word') return;
+        stopSpeechFallbackTimer();
         highlightSpeechWord(chunk, event.charIndex);
       };
       utterance.onend = () => {
+        clearTimeout(speechWatchdogTimer);
+        stopSpeechFallbackTimer();
+        if (activeSpeechUtterance === utterance) activeSpeechUtterance = null;
         if (runId !== speechRunId) return;
+        calibrateSpeechSpeed(chunk, performance.now() - speechChunkSpokenAt);
         speechChunkIndex += 1;
         speakNextChunk(runId);
       };
       utterance.onerror = event => {
+        clearTimeout(speechWatchdogTimer);
+        stopSpeechFallbackTimer();
+        if (activeSpeechUtterance === utterance) activeSpeechUtterance = null;
         if (runId !== speechRunId || event.error === 'canceled') return;
         speechActive = false;
         updateSpeechButtons();
         speechStatus.textContent = 'Read aloud stopped because speech playback failed: ' + event.error + '.';
       };
+      // Hold a reference: Chrome can garbage-collect a speaking utterance and
+      // drop it silently mid-chunk otherwise.
+      activeSpeechUtterance = utterance;
+      speechChunkSpokenAt = performance.now();
       window.speechSynthesis.speak(utterance);
+      // Highlight follows the voice on engines that send no boundary events.
+      startSpeechFallbackTimer(chunk, runId);
+      // Watchdog: some engines silently drop queued utterances — restart
+      // the same chunk so reading continues without user action.
+      clearTimeout(speechWatchdogTimer);
+      speechWatchdogTimer = setTimeout(() => {
+        if (runId !== speechRunId || !speechActive || speechHiddenPause) return;
+        if (window.speechSynthesis.speaking || window.speechSynthesis.pending ||
+            window.speechSynthesis.paused) return;
+        speakNextChunk(runId);
+      }, ((speechMsPerCharBase > 15 ? speechMsPerCharBase : 58) / Math.max(0.5, currentSpeechRate)) *
+        chunk.text.length + 5000);
     }
 
     function adjustSpeechRate(change) {
@@ -2525,6 +2692,11 @@
       speechActive = false;
       speechChunks = [];
       speechChunkIndex = 0;
+      speechHiddenPause = false;
+      speechResumeChunkIndex = null;
+      stopSpeechFallbackTimer();
+      clearTimeout(speechWatchdogTimer);
+      releaseSpeechWakeLock();
       if (speechSupported) window.speechSynthesis.cancel();
       clearSpeechHighlight();
       updateSpeechButtons();
@@ -2547,7 +2719,7 @@
       clearSpeechHighlight();
       speechActive = true;
       updateSpeechButtons();
-      speakNextChunk(runId);
+      speakWhenIdle(runId);
     }
 
     function updateSpeechButtons() {

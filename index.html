@@ -1663,10 +1663,16 @@
         ? [content]
         : (rendition ? rendition.getContents() : []);
       contents.forEach(item => {
+        const documentElement = item.document && item.document.documentElement;
         const body = item.document && item.document.body;
-        if (!body) return;
+        if (!documentElement || !body) return;
+        documentElement.style.setProperty('background-color', background, 'important');
         body.style.setProperty('background-color', background, 'important');
         body.style.setProperty('color', text, 'important');
+        // EPUB styles often assign colors directly to paragraphs and spans.
+        body.querySelectorAll('*').forEach(element => {
+          element.style.setProperty('color', text, 'important');
+        });
       });
     }
 

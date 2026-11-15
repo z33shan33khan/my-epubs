@@ -1320,6 +1320,7 @@
       musicPanel.style.display = 'none';
 
       book = ePub(meta.file);
+      await book.ready;
       rendition = book.renderTo('viewer', {
         width: '100%',
         height: '100%',
@@ -1371,7 +1372,6 @@
       updateSettingUI(preferences.theme, 'font-' + preferences.fontFamily.split('-')[0]);
 
       // Load the book and its Table of Contents
-      await book.ready;
       embeddedCoverBtn.disabled = false;
       const navigation = await book.loaded.navigation;
       

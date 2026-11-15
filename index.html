@@ -275,11 +275,50 @@
       cursor: pointer;
       font-size: 0.9rem;
       font-weight: 500;
-      transition: background 0.2s;
+      transition: background 0.2s, opacity 0.2s;
       white-space: nowrap;
     }
-    #reader-controls button:hover:not(:disabled) { filter: brightness(0.92); }
-    #reader-controls button:disabled { background: #b0b0b5; cursor: default; }
+    #reader-controls button:hover:not(:disabled) { filter: brightness(1.1); }
+    
+    /* Fix dull gray for disabled buttons (matches text color) */
+    #reader-controls button:disabled {
+      background: rgba(245, 245, 247, 0.15);
+      background: color-mix(in srgb, currentColor 15%, transparent);
+      color: var(--text-color);
+      cursor: default;
+      opacity: 1;
+    }
+
+    /* Read Aloud button when playing (disabled state) */
+    #reader-controls #read-aloud-btn:disabled {
+      background: #10b981; /* Emerald green */
+      color: #ffffff;
+    }
+
+    /* Beautiful colors for Pause, Skip, Stop */
+    #reader-controls #speech-pause-btn {
+      background: #f0a63a; /* Amber */
+      color: #201a08;
+    }
+    #reader-controls #speech-skip-btn {
+      background: #8b7cf6; /* Violet */
+      color: #ffffff;
+    }
+    #reader-controls #speech-stop-btn {
+      background: #ef5b5b; /* Coral Red */
+      color: #ffffff;
+    }
+
+    /* Close Book button */
+    #reader-controls button.secondary-action:last-of-type {
+      background: rgba(239, 91, 91, 0.12);
+      color: #ef5b5b;
+      border-color: rgba(239, 91, 91, 0.3);
+    }
+    #reader-controls button.secondary-action:last-of-type:hover:not(:disabled) {
+      background: rgba(239, 91, 91, 0.25);
+    }
+
     #reader-controls .spacer { flex: 1; }
     .speech-controls, .page-controls {
       display: flex;

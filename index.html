@@ -2805,12 +2805,20 @@
 
     function initializeReaderSettings() {
       const preferences = loadReaderPreferences();
+      if (preferences.theme !== 'light') {
+        preferences.theme = 'light';
+        preferences.pageBackground = READER_THEME_COLORS.light.background;
+        preferences.pageText = READER_THEME_COLORS.light.text;
+        saveReaderPreference('theme', preferences.theme);
+        saveReaderPreference('pageBackground', preferences.pageBackground);
+        saveReaderPreference('pageText', preferences.pageText);
+      }
       setReaderColorInputs(preferences);
       applyReaderColors();
       currentSpeechRate = preferences.speechRate;
       speechRate.value = formatSpeechRate(currentSpeechRate);
       speechRateLabel.textContent = formatSpeechRate(currentSpeechRate) + '×';
-      if (preferences.theme === 'dark') document.body.classList.add('dark-ui');
+      syncBodyThemeClass(preferences.theme);
       document.getElementById('theme-' + preferences.theme).classList.add('active');
       const fontId = 'font-' + preferences.fontFamily.split('-')[0];
       document.getElementById(fontId).classList.add('active');

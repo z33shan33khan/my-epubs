@@ -166,6 +166,96 @@
       max-width: 1200px;
       margin: 0 auto;
     }
+    /* ---------- Load from web (web-novel sources) ---------- */
+    .web-import-btn {
+      margin-top: 0.75rem;
+      padding: 0.5rem 1rem;
+      border: 1px solid var(--accent-color);
+      border-radius: 980px;
+      background: transparent;
+      color: var(--accent-color);
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .web-import-btn:hover { background: var(--accent-color); color: #fff; }
+    #web-import-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 4000;
+      background: rgba(0,0,0,0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+    #web-import-modal[hidden] { display: none; }
+    .web-import-dialog {
+      width: min(560px, 100%);
+      max-height: 86vh;
+      display: flex;
+      flex-direction: column;
+      background: var(--panel-bg);
+      color: var(--text-color);
+      border-radius: 16px;
+      box-shadow: 0 30px 90px rgba(0,0,0,0.4);
+      overflow: hidden;
+    }
+    .web-import-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 15px 18px;
+      border-bottom: 1px solid rgba(128,128,128,0.25);
+    }
+    .web-import-head h3 { margin: 0; font-size: 1.05rem; }
+    .web-import-x {
+      background: none;
+      border: none;
+      font-size: 1.4rem;
+      cursor: pointer;
+      color: var(--text-color);
+      line-height: 1;
+    }
+    .web-import-body { padding: 16px 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+    .wi-controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .wi-controls input[type="text"], .wi-controls input[type="number"] {
+      padding: 8px 10px;
+      border: 1px solid rgba(128,128,128,0.4);
+      border-radius: 8px;
+      background: transparent;
+      color: inherit;
+    }
+    .wi-controls input[type="text"] { flex: 1; min-width: 140px; }
+    .wi-controls select { padding: 8px 10px; border-radius: 8px; }
+    .wi-btn {
+      padding: 8px 14px;
+      border: 1px solid rgba(128,128,128,0.4);
+      border-radius: 980px;
+      background: transparent;
+      color: inherit;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+    .wi-btn-primary { background: var(--accent-color); border-color: var(--accent-color); color: #fff; font-weight: 600; }
+    .wi-btn:disabled { opacity: 0.5; cursor: default; }
+    .wi-hint { font-size: 0.78rem; opacity: 0.75; min-height: 1em; margin: 0; }
+    .wi-results { display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 10px; max-height: 44vh; overflow-y: auto; }
+    .wi-card {
+      text-align: center;
+      cursor: pointer;
+      border: 1px solid rgba(128,128,128,0.3);
+      border-radius: 11px;
+      padding: 9px;
+      background: rgba(128,128,128,0.08);
+    }
+    .wi-card:hover { border-color: var(--accent-color); }
+    .wi-card img { width: 88px; height: 118px; object-fit: cover; border-radius: 8px; background: rgba(128,128,128,0.2); }
+    .wi-card .t { display: block; font-size: 0.75rem; margin-top: 7px; line-height: 1.35; max-height: 3.4em; overflow: hidden; }
+    .wi-novel-head { display: flex; gap: 12px; align-items: flex-start; }
+    .wi-novel-head img { width: 74px; height: 100px; object-fit: cover; border-radius: 9px; background: rgba(128,128,128,0.2); }
+    .wi-novel-head h4 { margin: 0 0 4px; font-size: 1rem; }
+    .wi-range-label { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; opacity: 0.85; flex-wrap: wrap; }
     .book-card {
       background: var(--panel-bg);
       border-radius: 12px;
@@ -643,9 +733,49 @@
     <div class="library-search">
       <label for="book-search">Search books</label>
       <input id="book-search" type="search" placeholder="Search books by title…" autocomplete="off">
+      <button id="web-import-btn" class="web-import-btn" type="button">🌐 Load from web</button>
     </div>
     <div id="no-books-found" role="status" aria-live="polite">No books match your search.</div>
     <div class="book-grid" id="book-grid"></div>
+  </div>
+
+  <!-- Web novel import dialog -->
+  <div id="web-import-modal" hidden>
+    <div class="web-import-dialog">
+      <div class="web-import-head">
+        <h3>🌐 Load from web</h3>
+        <button id="web-import-close" class="web-import-x" type="button" aria-label="Close">×</button>
+      </div>
+      <div class="web-import-body">
+        <div class="wi-controls">
+          <select id="wiSource" title="Source site"></select>
+          <input type="text" id="wiQuery" placeholder="Search novels…">
+          <button id="wiSearchBtn" class="wi-btn wi-btn-primary" type="button">Search</button>
+        </div>
+        <div id="wiStatus" class="wi-hint"></div>
+        <div id="wiResults" class="wi-results"></div>
+        <div id="wiNovelPanel" hidden>
+          <button id="wiBackBtn" class="wi-btn" type="button">← Back to results</button>
+          <div class="wi-novel-head">
+            <img id="wiNovelCover" alt="" hidden>
+            <div>
+              <h4 id="wiNovelTitle"></h4>
+              <p id="wiNovelCount" class="wi-hint"></p>
+            </div>
+          </div>
+          <div class="wi-controls">
+            <label class="wi-range-label">From chapter
+              <input type="number" id="wiFrom" value="1" min="1" style="width:5.5rem">
+              to
+              <input type="number" id="wiTo" value="10" min="1" style="width:5.5rem">
+            </label>
+            <button id="wiImportBtn" class="wi-btn wi-btn-primary" type="button">Import chapters</button>
+          </div>
+          <button id="wiStopBtn" class="wi-btn" type="button" hidden>Stop importing</button>
+          <div id="wiImportStatus" class="wi-hint"></div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Reader view -->
@@ -1336,12 +1466,16 @@
 
     // --- Open a book ---
     async function openBook(index) {
-      const meta = BOOKS[index];
+      return openBookMeta(BOOKS[index]);
+    }
 
+    // meta is either a library entry ({title, file, cover}) or a web-novel
+    // import ({title, file: Blob, key}) — key keeps reading progress stable.
+    async function openBookMeta(meta) {
       stopReadingAloud('');
       embeddedCoverBtn.disabled = true;
       coverStatus.textContent = '';
-      currentBookFile = meta.file;
+      currentBookFile = meta.key || meta.file;
       currentBookTitle = meta.title;
       libraryView.style.display = 'none';
       readerView.style.display = 'flex';
@@ -1411,7 +1545,8 @@
       updateSettingUI(preferences.theme, 'font-' + preferences.fontFamily.split('-')[0]);
 
       // Load the book and its Table of Contents
-      embeddedCoverBtn.disabled = false;
+      // Imported web novels have no embedded cover to grab.
+      embeddedCoverBtn.disabled = !!meta.key;
       const navigation = await book.loaded.navigation;
       
       // Build the TOC
@@ -1425,7 +1560,7 @@
         const overlay = document.querySelector('[data-my-epubs-speech-overlays]');
         if (overlay) overlay.replaceChildren();
       });
-      await rendition.display(loadSavedLocation(meta.file) || undefined);
+      await rendition.display(loadSavedLocation(currentBookFile) || undefined);
       updateNavButtons();
       updateReaderProgress();
       if (speechSupported) {
@@ -2907,6 +3042,368 @@
       });
       updateSpeechButtons();
     }
+
+    // ============================================================
+    // Load from web — browse web-novel sources, search, and import
+    // chapter ranges as a real EPUB (built with JSZip), then open it.
+    // ============================================================
+    const WEB_NOVEL_SOURCES = [
+      { id: 'novelfull', name: 'NovelFull', base: 'https://novelfull.com' },
+      { id: 'allnovelfull', name: 'AllNovelFull', base: 'https://allnovelfull.com' }
+    ];
+    /* Cross-origin fetch routes, raced — the first that answers is remembered
+       for the rest of the session and tried on its own afterwards. */
+    const WEB_IMPORT_PROXIES = [
+      { name: 'rendered page', build: u => 'https://r.jina.ai/' + u, headers: { 'X-Return-Format': 'html' }, timeout: 35000 },
+      { name: 'proxy 1', build: u => 'https://cors-get-proxy.sirjosh.workers.dev/?url=' + encodeURIComponent(u), timeout: 16000, delay: 500 },
+      { name: 'proxy 2', build: u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u), timeout: 16000, delay: 800 },
+      { name: 'proxy 3', build: u => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u), timeout: 16000, delay: 1100 },
+      { name: 'proxy 4', build: u => 'https://corsproxy.io/?url=' + encodeURIComponent(u), timeout: 12000, delay: 1400 },
+      { name: 'proxy 6', build: u => 'https://test.cors.workers.dev/?' + u, timeout: 16000, delay: 2000 }
+    ];
+    let wiPreferredProxy = null;
+    let wiCurrentNovel = null;
+    let wiImportStop = false;
+
+    function wiProxyOrder() {
+      if (!wiPreferredProxy) return WEB_IMPORT_PROXIES;
+      const first = WEB_IMPORT_PROXIES.find(s => s.name === wiPreferredProxy);
+      return first ? [first, ...WEB_IMPORT_PROXIES.filter(s => s.name !== wiPreferredProxy)] : WEB_IMPORT_PROXIES;
+    }
+
+    function wiTryProxy(src, url, onController) {
+      const ctl = new AbortController();
+      if (onController) onController(ctl);
+      const timer = setTimeout(() => ctl.abort(), src.timeout || 16000);
+      return fetch(src.build(url), { ...(src.headers ? { headers: src.headers } : {}), signal: ctl.signal })
+        .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.text(); })
+        .then(body => {
+          if (body.length < 2000 || !/<(html|body|div|p)[\s>]/i.test(body.slice(0, 8000))) throw new Error('unusable response');
+          if (/just a moment|cf-browser-verification|enable javascript and cookies|attention required/i.test(body.slice(0, 4000))) throw new Error('blocked by bot protection');
+          return body;
+        })
+        .catch(e => { throw new Error(src.name + ': ' + (e.name === 'AbortError' ? 'timed out' : (e.message || 'failed'))); })
+        .finally(() => clearTimeout(timer));
+    }
+
+    async function wiFetchHtml(url, say) {
+      if (wiPreferredProxy) {
+        const preferred = wiProxyOrder()[0];
+        try { return await wiTryProxy(preferred, url); } catch (error) { /* fall through to the race */ }
+      }
+      const controllers = [];
+      let settled = false;
+      const attempt = async src => {
+        const result = await wiTryProxy(src, url, ctl => controllers.push(ctl));
+        if (!settled) {
+          settled = true;
+          wiPreferredProxy = src.name;
+          controllers.forEach(c => { try { c.abort(); } catch (error) { /* already aborted */ } });
+        }
+        return result;
+      };
+      const runs = wiProxyOrder().map(src =>
+        new Promise(resolve => setTimeout(resolve, src.delay || 0))
+          .then(() => settled ? Promise.reject(new Error(src.name + ': skipped')) : attempt(src))
+      );
+      const html = await Promise.any(runs);
+      if (say) say('');
+      return html;
+    }
+
+    function wiAbsUrl(href, base) {
+      if (!href) return '';
+      try { return new URL(href, base).href; } catch (error) { return ''; }
+    }
+
+    function wiParseSearch(html, base) {
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const out = [];
+      const seen = new Set();
+      doc.querySelectorAll('a[href$=".html"][title]').forEach(a => {
+        const title = (a.getAttribute('title') || '').trim();
+        const url = wiAbsUrl(a.getAttribute('href'), base);
+        if (!title || !url || url.includes('/chapter-') || seen.has(url)) return;
+        seen.add(url);
+        const row = a.closest('.row, li, article') || a.parentElement;
+        const img = row ? row.querySelector('img') : null;
+        const cover = img ? wiAbsUrl(img.getAttribute('src') || img.getAttribute('data-src') || '', base) : '';
+        out.push({ title, url, cover });
+      });
+      return out.slice(0, 30);
+    }
+
+    function wiChapterNum(href) {
+      const m = (href || '').match(/chapter-(\d+)/);
+      return m ? +m[1] : 0;
+    }
+
+    function wiParseNovel(html, base) {
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const links = [...doc.querySelectorAll('.list-chapter a[href]')].map(a => wiAbsUrl(a.getAttribute('href'), base)).filter(Boolean);
+      /* The site lists chapters newest-first — restore reading order. */
+      links.sort((a, b) => wiChapterNum(a) - wiChapterNum(b));
+      /* The list shows 50 chapters per ?page=N — find how many pages exist. */
+      const pages = [...html.matchAll(/href="[^"]*\?page=(\d+)[^"]*"/g)].map(m => +m[1]);
+      const maxPage = pages.length ? Math.max(...pages) : 1;
+      return { links, maxPage: Math.max(1, maxPage) };
+    }
+
+    async function wiEnsureChapters(novel, need) {
+      while (novel.links.length < need && novel.maxPage > novel.loadedPages) {
+        novel.loadedPages += 1;
+        const html = await wiFetchHtml(novel.url + '?page=' + novel.loadedPages);
+        const more = wiParseNovel(html, novel.base).links;
+        const seen = new Set(novel.links);
+        more.forEach(u => { if (!seen.has(u)) { seen.add(u); novel.links.push(u); } });
+        novel.links.sort((a, b) => wiChapterNum(a) - wiChapterNum(b));
+      }
+    }
+
+    function wiChapterTitleFrom(doc) {
+      const el = doc.querySelector('#chapter-title') || doc.querySelector('.tr-title');
+      if (el && el.textContent.trim()) return el.textContent.trim();
+      const t = doc.title || '';
+      let m = t.match(/-\s*Chapter\s+[\dIVXLCivxlc]+\s*-\s*(.+?)\s+online free/i);
+      if (m) return m[1].trim();
+      m = t.match(/Chapter\s+[\dIVXLCivxlc]+\s*[:–-]\s*(.+?)(\s+online free.*|$)/i);
+      return m ? m[1].trim() : '';
+    }
+
+    function wiParseChapter(html) {
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const node = doc.querySelector('#chapter-content') || doc.body;
+      node.querySelectorAll('script,style,ins,iframe,.chapter-nav,.adsbygoogle,[class*="ads"],[id*="ads"]').forEach(n => n.remove());
+      const paras = [...node.querySelectorAll('p')].map(p => p.textContent.replace(/\s+/g, ' ').trim()).filter(Boolean);
+      const text = paras.length ? paras.join('\n\n') : node.textContent.replace(/[ \t]+\n/g, '\n').trim();
+      return { title: wiChapterTitleFrom(doc), text };
+    }
+
+    function wiEscapeXml(s) {
+      return String(s).replace(/[<>&"']/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' }[c]));
+    }
+
+    function wiSlug(s) {
+      return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'web-novel';
+    }
+
+    /* Build a real EPUB file from the imported chapters so the epub.js reader,
+       TOC, read-aloud and saved positions all work exactly like a normal book. */
+    async function buildEpubBlob(title, chapters) {
+      const zip = new JSZip();
+      /* mimetype must be the first entry and stored uncompressed */
+      zip.file('mimetype', 'application/epub+zip', { compression: 'STORE' });
+      zip.file('META-INF/container.xml',
+        '<?xml version="1.0" encoding="utf-8"?>\n' +
+        '<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">\n' +
+        '  <rootfiles>\n' +
+        '    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>\n' +
+        '  </rootfiles>\n' +
+        '</container>');
+      const uuid = 'urn:uuid:' + (crypto.randomUUID ? crypto.randomUUID() : 'wi-' + Date.now());
+      const modified = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+      const manifest = [], spine = [], navPoints = [], ncxPoints = [];
+      chapters.forEach((ch, i) => {
+        const id = 'ch' + (i + 1);
+        const href = 'chapter-' + (i + 1) + '.xhtml';
+        const heading = wiEscapeXml(ch.title || ('Chapter ' + (i + 1)));
+        const paras = String(ch.text).split(/\n+/).map(t => t.trim()).filter(Boolean)
+          .map(t => '  <p>' + wiEscapeXml(t) + '</p>').join('\n');
+        zip.file('OEBPS/' + href,
+          '<?xml version="1.0" encoding="utf-8"?>\n' +
+          '<!DOCTYPE html>\n' +
+          '<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">\n' +
+          '<head><title>' + heading + '</title></head>\n' +
+          '<body>\n  <h2>' + heading + '</h2>\n' + paras + '\n</body>\n</html>');
+        manifest.push('    <item id="' + id + '" href="' + href + '" media-type="application/xhtml+xml"/>');
+        spine.push('    <itemref idref="' + id + '"/>');
+        navPoints.push('    <li><a href="' + href + '">' + heading + '</a></li>');
+        ncxPoints.push('    <navPoint id="np' + (i + 1) + '" playOrder="' + (i + 1) + '"><navLabel><text>' + heading + '</text></navLabel><content src="' + href + '"/></navPoint>');
+      });
+      const safeTitle = wiEscapeXml(title);
+      zip.file('OEBPS/content.opf',
+        '<?xml version="1.0" encoding="utf-8"?>\n' +
+        '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid" xml:lang="en">\n' +
+        '  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">\n' +
+        '    <dc:identifier id="bookid">' + uuid + '</dc:identifier>\n' +
+        '    <dc:title>' + safeTitle + '</dc:title>\n' +
+        '    <dc:language>en</dc:language>\n' +
+        '    <meta property="dcterms:modified">' + modified + '</meta>\n' +
+        '  </metadata>\n' +
+        '  <manifest>\n' +
+        '    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>\n' +
+        '    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>\n' +
+        manifest.join('\n') + '\n' +
+        '  </manifest>\n' +
+        '  <spine toc="ncx">\n' + spine.join('\n') + '\n  </spine>\n' +
+        '</package>');
+      zip.file('OEBPS/nav.xhtml',
+        '<?xml version="1.0" encoding="utf-8"?>\n' +
+        '<!DOCTYPE html>\n' +
+        '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="en">\n' +
+        '<head><title>Contents</title></head>\n' +
+        '<body>\n' +
+        '  <nav epub:type="toc" id="toc">\n    <h1>Contents</h1>\n    <ol>\n' +
+        navPoints.join('\n') + '\n    </ol>\n  </nav>\n</body>\n</html>');
+      zip.file('OEBPS/toc.ncx',
+        '<?xml version="1.0" encoding="utf-8"?>\n' +
+        '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">\n' +
+        '  <head><meta name="dtb:uid" content="' + uuid + '"/><meta name="dtb:depth" content="1"/><meta name="dtb:totalPageCount" content="0"/><meta name="dtb:maxPageNumber" content="0"/></head>\n' +
+        '  <docTitle><text>' + safeTitle + '</text></docTitle>\n' +
+        '  <navMap>\n' + ncxPoints.join('\n') + '\n  </navMap>\n' +
+        '</ncx>');
+      return zip.generateAsync({ type: 'blob', mimeType: 'application/epub+zip' });
+    }
+
+    function wiCloseModal() {
+      document.getElementById('web-import-modal').hidden = true;
+    }
+
+    async function wiOpenNovel(source, item) {
+      document.getElementById('wiStatus').textContent = 'Loading “' + item.title + '”…';
+      try {
+        const html = await wiFetchHtml(item.url, msg => document.getElementById('wiStatus').textContent = msg);
+        const novel = wiParseNovel(html, source.base);
+        wiCurrentNovel = { base: source.base, title: item.title, url: item.url, cover: item.cover, links: novel.links, loadedPages: 1, maxPage: novel.maxPage };
+        document.getElementById('wiResults').style.display = 'none';
+        document.getElementById('wiNovelPanel').hidden = false;
+        document.getElementById('wiNovelTitle').textContent = item.title;
+        document.getElementById('wiNovelCount').textContent = novel.links.length
+          ? (novel.maxPage > 1 ? novel.links.length + '+ chapters available' : novel.links.length + ' chapters available')
+          : 'No chapter list was found on the page.';
+        const coverImg = document.getElementById('wiNovelCover');
+        if (item.cover) { coverImg.src = item.cover; coverImg.hidden = false; } else coverImg.hidden = true;
+        document.getElementById('wiFrom').value = 1;
+        document.getElementById('wiTo').value = Math.min(10, novel.links.length);
+        document.getElementById('wiImportStatus').textContent = '';
+        document.getElementById('wiStatus').textContent = '';
+      } catch (error) {
+        document.getElementById('wiStatus').textContent = 'Could not load that novel. (' + error.message + ')';
+      }
+    }
+
+    async function wiImportChapters() {
+      const novel = wiCurrentNovel;
+      const status = document.getElementById('wiImportStatus');
+      if (!novel || !novel.links.length) { status.textContent = 'Open a novel first.'; return; }
+      const from = Math.max(1, +document.getElementById('wiFrom').value || 1);
+      let to = Math.max(from, +document.getElementById('wiTo').value || from + 9);
+      if (to - from + 1 > 150) { status.textContent = 'Import up to 150 chapters at a time.'; return; }
+      try { await wiEnsureChapters(novel, to); } catch (error) {
+        if (novel.links.length < from) {
+          status.textContent = 'Could not load the chapter list page. (' + error.message + ')';
+          return;
+        }
+        to = Math.min(to, novel.links.length);
+      }
+      to = Math.min(to, novel.links.length);
+      wiImportStop = false;
+      document.getElementById('wiStopBtn').hidden = false;
+      document.getElementById('wiStopBtn').disabled = false;
+      document.getElementById('wiImportBtn').disabled = true;
+      const chapters = [];
+      try {
+        for (let i = from; i <= to; i++) {
+          if (wiImportStop) break;
+          status.textContent = 'Importing chapter ' + i + ' of ' + to + '…';
+          const html = await wiFetchHtml(novel.links[i - 1]);
+          const ch = wiParseChapter(html);
+          if (ch.text && ch.text.length > 40) chapters.push({ title: ch.title || ('Chapter ' + i), text: ch.text });
+        }
+      } catch (error) {
+        document.getElementById('wiStopBtn').hidden = true;
+        document.getElementById('wiImportBtn').disabled = false;
+        status.textContent = 'Import stopped: ' + error.message;
+        if (!chapters.length) return;
+      }
+      document.getElementById('wiStopBtn').hidden = true;
+      if (!chapters.length) {
+        document.getElementById('wiImportBtn').disabled = false;
+        status.textContent = 'No readable chapters were found.';
+        return;
+      }
+      status.textContent = 'Building the EPUB…';
+      try {
+        const blob = await buildEpubBlob(novel.title, chapters);
+        wiCurrentNovel = null;
+        wiCloseModal();
+        await openBookMeta({ title: novel.title, file: blob, key: 'web-novel:' + wiSlug(novel.title) });
+      } catch (error) {
+        document.getElementById('wiImportBtn').disabled = false;
+        status.textContent = 'Could not build the EPUB: ' + error.message;
+      }
+    }
+
+    (function wireWebImport() {
+      const modal = document.getElementById('web-import-modal');
+      const sourceSel = document.getElementById('wiSource');
+      WEB_NOVEL_SOURCES.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.id;
+        opt.textContent = s.name;
+        sourceSel.appendChild(opt);
+      });
+      document.getElementById('web-import-btn').addEventListener('click', () => {
+        document.getElementById('wiResults').style.display = '';
+        document.getElementById('wiNovelPanel').hidden = true;
+        modal.hidden = false;
+      });
+      document.getElementById('web-import-close').addEventListener('click', wiCloseModal);
+      modal.addEventListener('click', e => { if (e.target === modal) wiCloseModal(); });
+      document.getElementById('wiSearchBtn').addEventListener('click', async () => {
+        const source = WEB_NOVEL_SOURCES.find(s => s.id === sourceSel.value) || WEB_NOVEL_SOURCES[0];
+        const q = document.getElementById('wiQuery').value.trim();
+        const statusEl = document.getElementById('wiStatus');
+        if (!q) { statusEl.textContent = 'Type something to search for.'; return; }
+        statusEl.textContent = 'Searching ' + source.name + ' for “' + q + '”…';
+        document.getElementById('wiResults').innerHTML = '';
+        document.getElementById('wiResults').style.display = '';
+        document.getElementById('wiNovelPanel').hidden = true;
+        try {
+          const html = await wiFetchHtml(source.base + '/search?keyword=' + encodeURIComponent(q),
+            msg => statusEl.textContent = msg);
+          const results = wiParseSearch(html, source.base);
+          if (!results.length) {
+            statusEl.textContent = 'No novels matched “' + q + '” on ' + source.name + '.';
+            return;
+          }
+          statusEl.textContent = results.length + ' results from ' + source.name + ' — pick a novel.';
+          const grid = document.getElementById('wiResults');
+          grid.innerHTML = '';
+          results.forEach(item => {
+            const card = document.createElement('div');
+            card.className = 'wi-card';
+            if (item.cover) {
+              const img = document.createElement('img');
+              img.loading = 'lazy';
+              img.onerror = () => img.remove();
+              img.src = item.cover;
+              card.appendChild(img);
+            }
+            const t = document.createElement('span');
+            t.className = 't';
+            t.textContent = item.title;
+            card.appendChild(t);
+            card.addEventListener('click', () => wiOpenNovel(source, item));
+            grid.appendChild(card);
+          });
+        } catch (error) {
+          statusEl.textContent = 'Search failed — every fetch route is busy or blocked right now. Try again in a moment. (' + error.message + ')';
+        }
+      });
+      document.getElementById('wiQuery').addEventListener('keydown', e => {
+        if (e.key === 'Enter') document.getElementById('wiSearchBtn').click();
+      });
+      document.getElementById('wiBackBtn').addEventListener('click', () => {
+        document.getElementById('wiNovelPanel').hidden = true;
+        document.getElementById('wiResults').style.display = '';
+      });
+      document.getElementById('wiImportBtn').addEventListener('click', wiImportChapters);
+      document.getElementById('wiStopBtn').addEventListener('click', () => {
+        wiImportStop = true;
+        document.getElementById('wiStopBtn').disabled = true;
+      });
+    })();
 
     initializePasscodeGate();
     initializeReaderSettings();

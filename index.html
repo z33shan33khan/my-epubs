@@ -179,6 +179,36 @@
       cursor: pointer;
     }
     .web-import-btn:hover { background: var(--accent-color); color: #fff; }
+    .novel-sites-btn {
+      margin-top: 0.5rem;
+      padding: 0.45rem 1rem;
+      border: 1px solid rgba(128,128,128,0.4);
+      border-radius: 980px;
+      background: transparent;
+      color: var(--text-color);
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+    .novel-sites-btn:hover { border-color: var(--accent-color); color: var(--accent-color); }
+    .novel-sites-box {
+      max-width: 720px;
+      margin: -0.9rem auto 2rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+    }
+    .novel-sites-box[hidden] { display: none; }
+    .novel-site-chip {
+      padding: 6px 14px;
+      border: 1px solid rgba(128,128,128,0.35);
+      border-radius: 980px;
+      font-size: 0.8rem;
+      color: inherit;
+      text-decoration: none;
+      background: rgba(128,128,128,0.08);
+    }
+    .novel-site-chip:hover { border-color: var(--accent-color); color: var(--accent-color); }
     #web-import-modal {
       position: fixed;
       inset: 0;
@@ -734,7 +764,9 @@
       <label for="book-search">Search books</label>
       <input id="book-search" type="search" placeholder="Search books by title…" autocomplete="off">
       <button id="web-import-btn" class="web-import-btn" type="button">🌐 Load from web</button>
+      <button id="novel-sites-btn" class="novel-sites-btn" type="button">📖 Novel sites (39)</button>
     </div>
+    <div id="novel-sites-box" class="novel-sites-box" hidden></div>
     <div id="no-books-found" role="status" aria-live="polite">No books match your search.</div>
     <div class="book-grid" id="book-grid"></div>
   </div>
@@ -1910,15 +1942,25 @@
         const speechRate = Number.isFinite(savedSpeechRate) && savedSpeechRate >= 0.5 && savedSpeechRate <= 3
           ? savedSpeechRate
           : 1;
+        /* Softer, easier-to-read highlight palette. Visitors whose storage still
+           holds one of the old glare-y defaults get migrated automatically. */
+        const migrateHighlight = (name, was, now) => {
+          if ((localStorage.getItem('my-epubs-' + name) || '').toLowerCase() === was) {
+            localStorage.setItem('my-epubs-' + name, now);
+          }
+        };
+        migrateHighlight('speechWordColor', '#ffbe28', '#f6b352');
+        migrateHighlight('speechLineColor', '#ffd700', '#ffe8a9');
+        migrateHighlight('speechParagraphColor', '#ffd700', '#fdf0cf');
         return {
           theme,
           fontFamily,
           speechRate,
           pageBackground,
           pageText: getColor('pageText', READER_THEME_COLORS[theme].text),
-          speechWordColor: getColor('speechWordColor', '#ffbe28'),
-          speechLineColor: getColor('speechLineColor', '#ffd700'),
-          speechParagraphColor: getColor('speechParagraphColor', '#ffd700'),
+          speechWordColor: getColor('speechWordColor', '#f6b352'),
+          speechLineColor: getColor('speechLineColor', '#ffe8a9'),
+          speechParagraphColor: getColor('speechParagraphColor', '#fdf0cf'),
           speechSkipWords: localStorage.getItem('my-epubs-speechSkipWords') || '',
           pronunciationReplacements: localStorage.getItem('my-epubs-pronunciationReplacements') || '',
           characterGenders: savedCharacterGenders === null ? DEFAULT_CHARACTER_GENDERS : savedCharacterGenders,
@@ -1936,9 +1978,9 @@
           speechRate: 1,
           pageBackground: READER_THEME_COLORS.light.background,
           pageText: READER_THEME_COLORS.light.text,
-          speechWordColor: '#ffbe28',
-          speechLineColor: '#ffd700',
-          speechParagraphColor: '#ffd700',
+          speechWordColor: '#f6b352',
+          speechLineColor: '#ffe8a9',
+          speechParagraphColor: '#fdf0cf',
           speechSkipWords: '',
           pronunciationReplacements: '',
           characterGenders: DEFAULT_CHARACTER_GENDERS,
@@ -3402,6 +3444,59 @@
       document.getElementById('wiStopBtn').addEventListener('click', () => {
         wiImportStop = true;
         document.getElementById('wiStopBtn').disabled = true;
+      });
+    })();
+
+    // Quick access to the favourite novel sites (opens in a new tab).
+    const NOVEL_SITES = [
+      ['AllNovel', 'https://allnovel.org'],
+      ["Anna's Archive", 'https://annas-archive.org'],
+      ['BestLightNovel', 'https://bestlightnovel.com'],
+      ['Chrysanthemum Garden', 'https://chrysanthemumgarden.com'],
+      ['FanMTL', 'https://www.fanmtl.com'],
+      ['Fenrir Realm', 'https://fenrirealm.com'],
+      ['Kol Novel', 'https://free.kolnovel.com'],
+      ['FreeWebNovel', 'https://freewebnovel.com'],
+      ['FuckNovelPia', 'https://fucknovelpia.com'],
+      ['Gray City', 'https://graycity.net'],
+      ['Hiraeth Translation', 'https://hiraethtranslation.com'],
+      ['IndoWebNovel', 'https://indowebnovel.id'],
+      ['Libread', 'https://libread.com'],
+      ['Light Novels Translations', 'https://lightnovelstranslations.com'],
+      ['Light Novel World', 'https://lightnovelworld.org'],
+      ['LNMTL', 'https://lnmtl.com'],
+      ['Meio Novels', 'https://meionovels.com'],
+      ['MTLNovel', 'https://mtlnovel.me'],
+      ['No Bad Novel', 'https://www.nobadnovel.com'],
+      ['NovelBin', 'https://novelbin.com'],
+      ['NovelBuddy', 'https://novelbuddy.com'],
+      ['NovelFire', 'https://novelfire.net'],
+      ['NovelFull', 'https://novelfull.com'],
+      ['NovelsOnline', 'https://novelsonline.org'],
+      ['Novlove', 'https://novlove.com'],
+      ['PawRead', 'https://pawread.com'],
+      ['ReadFrom', 'https://readfrom.net'],
+      ['ReadNovelFull', 'https://readnovelfull.com'],
+      ['ReadOnlineFreeBook', 'https://readonlinefreebook.com'],
+      ['Rewayat Club', 'https://rewayat.club'],
+      ['RiseNovel', 'https://risenovel.com'],
+      ['Royal Road', 'https://www.royalroad.com'],
+      ['Sakura Novel', 'https://sakuranovel.id'],
+      ['ScribbleHub', 'https://www.scribblehub.com'],
+      ['Skynovels', 'https://www.skynovels.net'],
+      ['SonicMTL', 'https://www.sonicmtl.com'],
+      ['WTR-Lab', 'https://wtr-lab.com'],
+      ['Wuxia.click', 'https://wuxia.click'],
+      ['WuxiaBox', 'https://www.wuxiabox.com']
+    ];
+    (function wireNovelSites() {
+      const box = document.getElementById('novel-sites-box');
+      box.innerHTML = NOVEL_SITES.map(([name, url]) =>
+        '<a class="novel-site-chip" href="' + url + '" target="_blank" rel="noopener noreferrer" title="' + url + '">' + name + '</a>'
+      ).join('');
+      document.getElementById('novel-sites-btn').addEventListener('click', () => {
+        box.hidden = !box.hidden;
+        document.getElementById('novel-sites-btn').textContent = box.hidden ? '📖 Novel sites (39)' : '▴ Hide novel sites';
       });
     })();
 

@@ -1136,6 +1136,18 @@
     let speechHiddenPause = false;
     let speechResumeChunkIndex = null;
     let speechWakeLock = null;
+    // Chrome stops an utterance after ~15s unless the synthesis is nudged; a
+    // gentle pause/resume ping keeps the same voice reading indefinitely.
+    let speechKeepAliveTimer = null;
+    // The chosen voice is resolved once per run and reused for every chunk, so
+    // a "Google Translate English (continuous)" run never switches voices.
+    let lockedSpeechVoice = null;
+    // Ownership of the reader's own display() moves: the voice records the CFI
+    // and section index it is moving to, so a real user page/chapter jump (a
+    // different location) can be told apart and read-aloud restarts there.
+    let speechNavCfi = null;
+    let speechNavIndex = -1;
+    let speechNavPending = 0; // when the voice last initiated a display()
     let navLockAt = 0;
     const READER_THEME_COLORS = {
       light: { background: '#ffffff', text: '#1d1d1f' },
@@ -1648,6 +1660,22 @@
       }
       rendition.on('relocated', updateNavButtons);
       rendition.on('relocated', updateReaderProgress);
+      /* Read-aloud must survive page turns and chapter jumps: when the user
+         moves the reader while a run is going, restart it from the new spot
+         instead of letting it stop or drag the view back. Only the Stop button
+         (or leaving the book) ends a run. */
+      rendition.on('relocated', () => {
+        if (!speechActive || speechHiddenPause) return;
+        if (isSpeechOwnMove()) return; // the voice moved the view itself
+        // Defer a tick so any display() the restart triggers happens outside
+        // epub.js's own relocated event, and re-check that the move was not
+        // the reader's own after all.
+        setTimeout(() => {
+          if (!speechActive || speechHiddenPause) return;
+          if (isSpeechOwnMove()) return;
+          startReadingAloud(null);
+        }, 60);
+      });
       document.addEventListener('keydown', handleKey);
     }
 
@@ -2107,6 +2135,14 @@
       defaultOption.textContent = 'System default';
       speechVoice.replaceChildren(defaultOption);
 
+      // Continuous Google Translate English: the engine is fed short chunks and
+      // the voice is locked for the whole run, so it never runs out of
+      // characters mid-sentence and never silently switches to another voice.
+      const googleOption = document.createElement('option');
+      googleOption.value = 'google-translate-en';
+      googleOption.textContent = '🌟 Google Translate English (continuous)';
+      speechVoice.appendChild(googleOption);
+
       window.speechSynthesis.getVoices().forEach(voice => {
         const option = document.createElement('option');
         option.value = voice.voiceURI;
@@ -2116,6 +2152,22 @@
       if (Array.from(speechVoice.options).some(option => option.value === selectedVoice)) {
         speechVoice.value = selectedVoice;
       }
+    }
+
+    /* Resolve the "Google Translate English" choice to a real voice, preferring
+       Google's US English reading voice, then the UK female/male pair, then
+       any other Google English voice, then any English voice. */
+    function pickGoogleTranslateVoice() {
+      const voices = window.speechSynthesis.getVoices();
+      const googleEn = voices.filter(voice =>
+        /^google/i.test(voice.name || '') && /^en/i.test(voice.lang || ''));
+      const byName = pattern => googleEn.find(voice => pattern.test(voice.name));
+      return byName(/google\s*us\s*english/i)
+        || byName(/google\s*uk\s*english\s*female/i)
+        || byName(/google\s*uk\s*english\s*male/i)
+        || googleEn[0]
+        || voices.find(voice => /^en/i.test(voice.lang || ''))
+        || null;
     }
 
     function getSpeechTextMap(element) {
@@ -2445,7 +2497,8 @@
     }
 
     function ensureSpeechHighlightStyles(content) {
-      const document = content.document;
+      const document = content && content.document;
+      if (!document || !document.head) return; // view was destroyed
       let style = document.querySelector('[data-my-epubs-speech-style]');
       if (!style) {
         const style = document.createElement('style');
@@ -2461,13 +2514,17 @@
     }
 
     function supportsSpeechRangeHighlights(content) {
-      const view = content.document.defaultView;
+      const doc = content && content.document;
+      const view = doc && doc.defaultView;
+      if (!view) return false; // view was destroyed
       return Boolean(view.CSS && view.CSS.highlights && view.Highlight &&
         (!view.CSS.supports || view.CSS.supports('selector(::highlight(my-epubs-speech-word))')));
     }
 
     function useSpeechRangeOverlays(content) {
-      const view = content.document.defaultView;
+      const doc = content && content.document;
+      const view = doc && doc.defaultView;
+      if (!view) return true; // view was destroyed — draw nothing harmful
       const coarsePointer = view.matchMedia && view.matchMedia('(pointer: coarse)').matches;
       return Boolean(coarsePointer || !supportsSpeechRangeHighlights(content));
     }
@@ -2477,8 +2534,11 @@
     }
 
     function getSpeechOverlayDocument(content) {
-      const frameElement = content.document.defaultView.frameElement;
-      return frameElement ? frameElement.ownerDocument : content.document;
+      const doc = content && content.document;
+      const view = doc && doc.defaultView;
+      if (!view) return null; // view was destroyed
+      const frameElement = view.frameElement;
+      return frameElement ? frameElement.ownerDocument : doc;
     }
 
     function drawSpeechRangeOverlay(content, range, color, type) {
@@ -2597,12 +2657,36 @@
       }
     }
 
+    /* Chrome ends long utterances after ~15 seconds of text, which cut books
+       off mid-sentence. A gentle pause/resume ping every 9 seconds keeps the
+       synthesis alive so the same voice reads on indefinitely. The ping skips
+       itself whenever the reader is paused by the user or hidden. */
+    function startSpeechKeepAlive(runId) {
+      stopSpeechKeepAlive();
+      speechKeepAliveTimer = setInterval(() => {
+        if (runId !== speechRunId || !speechActive || speechHiddenPause) { stopSpeechKeepAlive(); return; }
+        if (window.speechSynthesis.paused) return; // the user paused — leave it alone
+        try {
+          if (window.speechSynthesis.speaking) {
+            window.speechSynthesis.pause();
+            window.speechSynthesis.resume();
+          }
+        } catch (error) { /* some engines refuse the ping — the chunk still finishes */ }
+      }, 9000);
+    }
+
+    function stopSpeechKeepAlive() {
+      if (speechKeepAliveTimer) { clearInterval(speechKeepAliveTimer); speechKeepAliveTimer = null; }
+    }
+
     /* Android Chrome normally sends no word-boundary events, so estimate the
        word being spoken from elapsed time so the highlight keeps moving there. */
     function startSpeechFallbackTimer(chunk, runId) {
       stopSpeechFallbackTimer();
       const rate = Math.max(0.5, currentSpeechRate) || 1;
-      const perChar = (speechMsPerCharBase > 15 ? speechMsPerCharBase : 58) / rate;
+      /* Estimate 15% slower than the calibrated speed so the highlight trails
+         the voice slightly instead of running ahead of it on mobile. */
+      const perChar = ((speechMsPerCharBase > 15 ? speechMsPerCharBase : 62) / rate) * 1.15;
       const startedAt = speechChunkSpokenAt || performance.now();
       speechFallbackTimer = setInterval(() => {
         if (runId !== speechRunId || !speechActive) { stopSpeechFallbackTimer(); return; }
@@ -2616,7 +2700,7 @@
     }
 
     function calibrateSpeechSpeed(chunk, elapsedMs) {
-      if (!elapsedMs || elapsedMs < 1000 || chunk.text.length < 40) return;
+      if (!elapsedMs || elapsedMs < 600 || chunk.text.length < 30) return;
       const ms = elapsedMs / chunk.text.length * Math.max(0.5, currentSpeechRate);
       if (Number.isFinite(ms) && ms > 5 && ms < 400) {
         speechMsPerCharBase = speechMsPerCharBase ? speechMsPerCharBase * 0.75 + ms * 0.25 : ms;
@@ -2654,6 +2738,7 @@
       if (!speechActive || speechHiddenPause) return;
       speechHiddenPause = true;
       speechResumeChunkIndex = speechChunkIndex;
+      stopSpeechKeepAlive();
       stopSpeechFallbackTimer();
       clearTimeout(speechWatchdogTimer);
       speechRunId += 1; /* invalidate pending onend/onerror callbacks */
@@ -2693,23 +2778,32 @@
     }
 
     function clearSpeechRangeHighlights(content) {
-      const view = content.document.defaultView;
-      if (view.CSS && view.CSS.highlights) {
-        view.CSS.highlights.delete('my-epubs-speech-line');
-        view.CSS.highlights.delete('my-epubs-speech-word');
-      }
-      const overlay = getSpeechOverlayDocument(content).querySelector('[data-my-epubs-speech-overlays]');
-      if (overlay) overlay.replaceChildren();
+      /* The iframe view may have been destroyed when the page or chapter
+         changed — a dead view has nothing left to clear. */
+      try {
+        const doc = content && content.document;
+        const view = doc && doc.defaultView;
+        if (view && view.CSS && view.CSS.highlights) {
+          view.CSS.highlights.delete('my-epubs-speech-line');
+          view.CSS.highlights.delete('my-epubs-speech-word');
+        }
+        const overlayDoc = getSpeechOverlayDocument(content);
+        const overlay = overlayDoc && overlayDoc.querySelector('[data-my-epubs-speech-overlays]');
+        if (overlay) overlay.replaceChildren();
+      } catch (error) { /* the view is gone — nothing to clear */ }
     }
 
     function highlightSpeechWord(chunk, charIndex) {
+      const content = chunk && chunk.segment && chunk.segment.content;
+      const doc = content && content.document;
+      const view = doc && doc.defaultView;
+      if (!view) return; // the chapter/page changed and the view was destroyed
       const currentCharIndex = Math.max(0, Math.min(chunk.text.length - 1, Number(charIndex) || 0));
       activeSpeechChunk = chunk;
       activeSpeechCharIndex = currentCharIndex;
       highlightSpeechSegment(chunk.segment);
       ensureSpeechHighlightStyles(chunk.segment.content);
 
-      const view = chunk.segment.content.document.defaultView;
       clearSpeechRangeHighlights(chunk.segment.content);
       const useOverlays = useSpeechRangeOverlays(chunk.segment.content);
       if (speechHighlightMode.value === 'line') {
@@ -2752,8 +2846,9 @@
 
     function clearSpeechHighlight() {
       styledSpeechContents.forEach(content => {
-        const document = content.document;
-        document.querySelectorAll('.my-epubs-speech-current-paragraph').forEach(element => {
+        const doc = content && content.document; // may be null after the view was destroyed
+        if (!doc) return;
+        doc.querySelectorAll('.my-epubs-speech-current-paragraph').forEach(element => {
           element.classList.remove('my-epubs-speech-current-paragraph');
         });
         clearSpeechRangeHighlights(content);
@@ -2778,6 +2873,20 @@
         ' · Chapter progress ' + chapterProgress + '%';
     }
 
+    /* True when the current relocation is one the read-aloud voice asked for:
+       it matches the CFI/section the voice last requested while that request is
+       still in flight. A real user jump lands elsewhere, so the relocated
+       handler restarts the run at the reader's new spot. */
+    function isSpeechOwnMove() {
+      if (!rendition || !speechNavPending) return false;
+      if (performance.now() - speechNavPending >= 2500) return false;
+      const location = rendition.currentLocation();
+      const start = location && location.start;
+      if (!start) return false;
+      if (speechNavCfi && start.cfi === speechNavCfi) return true;
+      return Number(start.index) === speechNavIndex;
+    }
+
     function startReadingAloud(startAt = null) {
       if (!speechSupported) {
         speechStatus.textContent = 'Read aloud is not supported by this browser.';
@@ -2794,6 +2903,10 @@
 
       const currentLocation = rendition.currentLocation();
       const currentCfi = !startAt && currentLocation && currentLocation.start && currentLocation.start.cfi;
+      speechNavCfi = currentCfi || null;
+      speechNavIndex = currentLocation && currentLocation.start
+        ? Number(currentLocation.start.index) : -1;
+      speechNavPending = 0;
       if (currentCfi) {
         const cfi = new ePub.CFI();
         speechChunks = speechChunks.filter(chunk => cfi.compare(chunk.cfi, currentCfi) >= 0);
@@ -2808,6 +2921,11 @@
       speechHiddenPause = false;
       speechResumeChunkIndex = null;
       displayedSpeechCfi = null;
+      // Resolve the voice once for the entire run — every chunk after this is
+      // spoken by the same voice, even when the list of system voices reloads.
+      lockedSpeechVoice = speechVoice.value === 'google-translate-en'
+        ? pickGoogleTranslateVoice()
+        : null;
       updateSpeechButtons();
       requestSpeechWakeLock();
       speakWhenIdle(runId);
@@ -2821,6 +2939,9 @@
       for (let index = currentIndex + 1; index < spineItems.length; index += 1) {
         if (runId !== speechRunId || !speechActive) return;
         try {
+          speechNavIndex = index; // the reader's own chapter move
+          speechNavCfi = null;
+          speechNavPending = performance.now();
           await rendition.display(spineItems[index].href);
         } catch (error) {
           if (runId !== speechRunId) return;
@@ -2856,6 +2977,8 @@
       const chunk = speechChunks[speechChunkIndex];
       try {
         if (displayedSpeechCfi !== chunk.cfi && !isSpeechChunkNearViewport(chunk)) {
+          speechNavCfi = chunk.cfi; // the reader's own move — not a user page turn
+          speechNavPending = performance.now();
           await rendition.display(chunk.cfi);
           if (runId !== speechRunId || !speechActive) return;
           displayedSpeechCfi = chunk.cfi;
@@ -2878,8 +3001,15 @@
       updateSpeechProgress();
       const utterance = new SpeechSynthesisUtterance(chunk.text);
       utterance.rate = currentSpeechRate;
-      const voice = window.speechSynthesis.getVoices().find(item => item.voiceURI === speechVoice.value);
-      if (voice) utterance.voice = voice;
+      // The run's voice is resolved once (locked) and reused for every chunk,
+      // so a continuous run never switches to a different voice mid-book.
+      const voice = speechVoice.value === 'google-translate-en'
+        ? (lockedSpeechVoice || (lockedSpeechVoice = pickGoogleTranslateVoice()))
+        : window.speechSynthesis.getVoices().find(item => item.voiceURI === speechVoice.value);
+      if (voice) {
+        utterance.voice = voice;
+        if (voice.lang) utterance.lang = voice.lang;
+      }
       utterance.onboundary = event => {
         if (runId !== speechRunId || event.name !== 'word') return;
         stopSpeechFallbackTimer();
@@ -2888,6 +3018,7 @@
       utterance.onend = () => {
         clearTimeout(speechWatchdogTimer);
         stopSpeechFallbackTimer();
+        if (runId === speechRunId) stopSpeechKeepAlive();
         if (activeSpeechUtterance === utterance) activeSpeechUtterance = null;
         if (runId !== speechRunId) return;
         calibrateSpeechSpeed(chunk, performance.now() - speechChunkSpokenAt);
@@ -2897,6 +3028,7 @@
       utterance.onerror = event => {
         clearTimeout(speechWatchdogTimer);
         stopSpeechFallbackTimer();
+        if (runId === speechRunId) stopSpeechKeepAlive();
         if (activeSpeechUtterance === utterance) activeSpeechUtterance = null;
         if (runId !== speechRunId || event.error === 'canceled') return;
         speechActive = false;
@@ -2906,8 +3038,19 @@
       // Hold a reference: Chrome can garbage-collect a speaking utterance and
       // drop it silently mid-chunk otherwise.
       activeSpeechUtterance = utterance;
+      /* Android often starts the audio a beat after speak() returns — with
+         network voices (Google Translate) that delay is the main reason the
+         highlight ran ahead of the voice on phones. Re-anchor the estimate to
+         the real audio start the moment it happens. */
+      utterance.onstart = () => {
+        if (runId !== speechRunId) return;
+        speechChunkSpokenAt = performance.now();
+        startSpeechFallbackTimer(chunk, runId);
+      };
       speechChunkSpokenAt = performance.now();
       window.speechSynthesis.speak(utterance);
+      // Keep the engine from timing the utterance out mid-text (see helper).
+      startSpeechKeepAlive(runId);
       // Highlight follows the voice on engines that send no boundary events.
       startSpeechFallbackTimer(chunk, runId);
       // Watchdog: some engines silently drop queued utterances — restart
@@ -2964,6 +3107,8 @@
       speechChunkIndex = 0;
       speechHiddenPause = false;
       speechResumeChunkIndex = null;
+      lockedSpeechVoice = null;
+      stopSpeechKeepAlive();
       stopSpeechFallbackTimer();
       clearTimeout(speechWatchdogTimer);
       releaseSpeechWakeLock();
@@ -3622,7 +3767,10 @@
 
     /* ---- Format converters: everything becomes chapters for buildEpubBlob ---- */
     function textFileToChapters(raw, isMarkdown) {
-      const text = String(raw).replace(/\r\n?/g, '\n').replace(/\u0000/g, '').trim();
+      // Literal \n / \r escape sequences (broken line breaks from concatenated
+      // text) become real newlines so they never show up in the chapter text.
+      const text = String(raw).replace(/\\r\\n|\\n|\\r/g, '\n')
+        .replace(/\r\n?/g, '\n').replace(/\u0000/g, '').trim();
       if (!text) throw new Error('the file has no readable text in it');
       const sections = [];
       const push = (t, body) => {

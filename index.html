@@ -190,6 +190,8 @@
       cursor: pointer;
     }
     .novel-sites-btn:hover { border-color: var(--accent-color); color: var(--accent-color); }
+    #disk-import-status { font-size: 0.82rem; opacity: 0.85; min-height: 1.1em; margin-top: 0.35rem; }
+    #disk-import-status:empty { margin-top: 0; }
     .novel-sites-box {
       max-width: 720px;
       margin: -0.9rem auto 2rem;
@@ -287,6 +289,7 @@
     .wi-novel-head h4 { margin: 0 0 4px; font-size: 1rem; }
     .wi-range-label { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; opacity: 0.85; flex-wrap: wrap; }
     .book-card {
+      position: relative;
       background: var(--panel-bg);
       border-radius: 12px;
       padding: 1rem;
@@ -764,7 +767,11 @@
       <label for="book-search">Search books</label>
       <input id="book-search" type="search" placeholder="Search books by title…" autocomplete="off">
       <button id="web-import-btn" class="web-import-btn" type="button">🌐 Load from web</button>
+      <button id="disk-import-btn" class="web-import-btn" type="button">📁 Load from disk</button>
       <button id="novel-sites-btn" class="novel-sites-btn" type="button">📖 Novel sites (39)</button>
+      <input id="disk-file-input" type="file" multiple hidden
+             accept=".epub,.pdf,.txt,.text,.md,.markdown,.html,.htm,.docx,.fb2">
+      <div id="disk-import-status" role="status" aria-live="polite"></div>
     </div>
     <div id="novel-sites-box" class="novel-sites-box" hidden></div>
     <div id="no-books-found" role="status" aria-live="polite">No books match your search.</div>
@@ -1204,6 +1211,47 @@
       bookGrid.innerHTML = '';
       const query = bookSearch.value.trim().toLocaleLowerCase();
       let matchingBooks = 0;
+
+      // Books the user uploaded from their own disk (IndexedDB).
+      uploadBooks.forEach(up => {
+        if (!up.title.toLocaleLowerCase().includes(query)) return;
+        matchingBooks += 1;
+        const card = document.createElement('div');
+        card.className = 'book-card';
+        card.dataset.bookFile = up.key;
+        card.onclick = () => openBookMeta({ title: up.title, file: up.blob, key: up.key });
+
+        const cover = document.createElement('img');
+        cover.className = 'cover';
+        cover.alt = up.title;
+        cover.src = loadSavedBookCover(up.key) || uploadCoverDataUrl(up.title);
+
+        const title = document.createElement('div');
+        title.className = 'title';
+        title.textContent = '📁 ' + up.title;
+
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.textContent = '×';
+        del.title = 'Remove from library (the file on your disk is untouched)';
+        del.setAttribute('aria-label', 'Remove ' + up.title + ' from library');
+        Object.assign(del.style, {
+          position: 'absolute', top: '4px', right: '4px', width: '26px', height: '26px',
+          borderRadius: '50%', border: 'none', cursor: 'pointer', fontSize: '16px',
+          lineHeight: '1', background: 'rgba(0,0,0,0.55)', color: '#fff', zIndex: '2'
+        });
+        del.onclick = async (ev) => {
+          ev.stopPropagation();
+          await uploadsDelete(up.key);
+          uploadBooks = uploadBooks.filter(x => x.key !== up.key);
+          buildLibrary();
+        };
+
+        card.appendChild(cover);
+        card.appendChild(title);
+        card.appendChild(del);
+        bookGrid.appendChild(card);
+      });
 
       BOOKS.forEach((b, index) => {
         if (!b.title.toLocaleLowerCase().includes(query)) return;
@@ -3500,11 +3548,357 @@
       });
     })();
 
+    /* ================= Load books from local disk =================
+       EPUB opens directly; PDF / TXT / Markdown / HTML / DOCX / FB2 are split
+       into chapters and re-packed as a real EPUB with buildEpubBlob, so the
+       reader, TOC, read-aloud and saved progress all work unchanged.
+       Uploads are remembered in IndexedDB, so they survive a reload. */
+    let uploadBooks = [];
+    const diskInput = document.getElementById('disk-file-input');
+    const diskStatus = document.getElementById('disk-import-status');
+    let diskStatusTimer = 0;
+    function diskMsg(text) {
+      diskStatus.textContent = text || '';
+      clearTimeout(diskStatusTimer);
+      if (text) diskStatusTimer = setTimeout(() => { diskStatus.textContent = ''; }, 15000);
+    }
+
+    function uploadsOpen() {
+      return new Promise((resolve, reject) => {
+        if (!window.indexedDB) { reject(new Error('IndexedDB is unavailable')); return; }
+        const req = indexedDB.open('my-epubs-uploads', 1);
+        req.onupgradeneeded = () => { req.result.createObjectStore('books', { keyPath: 'key' }); };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+    async function uploadsAll() {
+      const db = await uploadsOpen();
+      return new Promise((resolve, reject) => {
+        const req = db.transaction('books', 'readonly').objectStore('books').getAll();
+        req.onsuccess = () => { db.close(); resolve(req.result || []); };
+        req.onerror = () => { db.close(); reject(req.error); };
+      });
+    }
+    async function uploadsPut(rec) {
+      const db = await uploadsOpen();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('books', 'readwrite');
+        tx.objectStore('books').put(rec);
+        tx.oncomplete = () => { db.close(); resolve(); };
+        tx.onerror = () => { db.close(); reject(tx.error); };
+        tx.onabort = () => { db.close(); reject(tx.error); };
+      });
+    }
+    async function uploadsDelete(key) {
+      try {
+        const db = await uploadsOpen();
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction('books', 'readwrite');
+          tx.objectStore('books').delete(key);
+          tx.oncomplete = () => { db.close(); resolve(); };
+          tx.onerror = () => { db.close(); reject(tx.error); };
+        });
+      } catch (error) { console.warn('Could not remove the uploaded book record.', error); }
+    }
+    async function loadUploadBooks() {
+      if (!window.indexedDB) return;
+      try {
+        const recs = await uploadsAll();
+        recs.sort((a, b) => (b.added || 0) - (a.added || 0));
+        uploadBooks = recs.filter(r => r && r.title && r.blob instanceof Blob);
+      } catch (error) { console.warn('Could not load uploaded books.', error); }
+    }
+
+    function uploadCoverDataUrl(title) {
+      const letter = ((title || 'Book').trim()[0] || 'B').toUpperCase();
+      const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="450">' +
+        '<rect width="300" height="450" fill="#2f3e52"/>' +
+        '<rect x="14" y="14" width="272" height="422" rx="6" fill="none" stroke="#f6b352" stroke-width="3"/>' +
+        '<text x="150" y="255" font-size="130" text-anchor="middle" fill="#f6b352" font-family="Georgia,serif">' +
+        letter + '</text></svg>';
+      return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+    }
+
+    /* ---- Format converters: everything becomes chapters for buildEpubBlob ---- */
+    function textFileToChapters(raw, isMarkdown) {
+      const text = String(raw).replace(/\r\n?/g, '\n').replace(/\u0000/g, '').trim();
+      if (!text) throw new Error('the file has no readable text in it');
+      const sections = [];
+      const push = (t, body) => {
+        const b = String(body || '').replace(/\n{3,}/g, '\n\n').trim();
+        if (b) sections.push({ title: String(t || '').trim().slice(0, 80), text: b });
+      };
+      if (isMarkdown) {
+        const heads = [...text.matchAll(/^(#{1,3})\s+(.+)$/gm)];
+        if (heads.length >= 2) {
+          heads.forEach((h, i) => {
+            const start = h.index + h[0].length;
+            const end = i + 1 < heads.length ? heads[i + 1].index : text.length;
+            push(h[2], text.slice(start, end));
+          });
+          if (sections.length) return sections;
+        }
+      }
+      const marks = [...text.matchAll(/^\s*(?:chapter|part|book)\s+(?:[\dIVXLCivxlc]+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty)\b[^\n]*$/gim)];
+      if (marks.length >= 2) {
+        marks.forEach((m, i) => {
+          const end = i + 1 < marks.length ? marks[i + 1].index : text.length;
+          push(m[0], text.slice(m.index, end));
+        });
+        if (sections.length) return sections;
+      }
+      // No headings at all → split into ~7000-character parts on paragraph boundaries.
+      let n = 1, buf = [], size = 0;
+      for (const para of text.split(/\n{2,}/)) {
+        if (size + para.length > 7000 && buf.length) { push('Part ' + n++, buf.join('\n\n')); buf = []; size = 0; }
+        buf.push(para); size += para.length + 2;
+      }
+      push('Part ' + n, buf.join('\n\n'));
+      return sections;
+    }
+
+    function htmlFileToChapters(raw) {
+      const doc = new DOMParser().parseFromString(raw, 'text/html');
+      doc.querySelectorAll('script,style,noscript,svg,nav,header,footer,aside,iframe,form').forEach(n => n.remove());
+      const body = doc.body || doc.documentElement;
+      const ogTitle = doc.querySelector('meta[property="og:title"]');
+      const title = ((ogTitle && ogTitle.content) || doc.title ||
+        (doc.querySelector('h1') && doc.querySelector('h1').textContent) || '').replace(/\s+/g, ' ').trim();
+      const blocks = [];
+      body.querySelectorAll('h1,h2,h3,p,li,blockquote,pre,div').forEach(el => {
+        if (el.closest('nav,header,footer,aside')) return;
+        // Skip wrapper divs that only hold other blocks, so text is not doubled.
+        if (el.tagName === 'DIV' && el.querySelector('p,li,h1,h2,h3,blockquote,pre,div')) return;
+        const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
+        if (t) blocks.push({ tag: el.tagName, text: t });
+      });
+      if (!blocks.length) throw new Error('no readable text was found in that page');
+      const sections = [];
+      let cur = { title: '', parts: [] };
+      const flush = () => {
+        const b = cur.parts.join('\n\n').trim();
+        if (b) sections.push({ title: cur.title || title || 'Content', text: b });
+        cur = { title: '', parts: [] };
+      };
+      for (const b of blocks) {
+        if (/^H[12]$/.test(b.tag)) {
+          if (cur.parts.join(' ').trim().length > 200) flush();
+          if (!cur.title) cur.title = b.text.slice(0, 80);
+          else { flush(); cur.title = b.text.slice(0, 80); }
+        }
+        cur.parts.push(b.text);
+      }
+      flush();
+      return { title, sections };
+    }
+
+    async function docxFileToChapters(file) {
+      const zip = await JSZip.loadAsync(await file.arrayBuffer());
+      const entry = zip.file('word/document.xml');
+      if (!entry) throw new Error('this does not look like a DOCX file');
+      const xml = await entry.async('string');
+      const doc = new DOMParser().parseFromString(xml, 'application/xml');
+      if (doc.querySelector('parsererror')) throw new Error('the document could not be parsed');
+      const sections = [];
+      let cur = { title: '', parts: [] };
+      const flush = () => {
+        const t = cur.parts.join('\n\n').trim();
+        if (t) sections.push({ title: cur.title, text: t });
+        cur = { title: '', parts: [] };
+      };
+      for (const p of Array.from(doc.getElementsByTagName('w:p'))) {
+        const text = Array.from(p.getElementsByTagName('w:t')).map(t => t.textContent || '').join('').trim();
+        if (!text) continue;
+        const styleEl = p.getElementsByTagName('w:pStyle')[0];
+        const style = styleEl ? (styleEl.getAttribute('w:val') || '').replace(/[-_]/g, ' ') : '';
+        if (/^(?:heading\s*1|h1|title|heading1|chapter)$/i.test(style)) {
+          if (cur.parts.join(' ').trim().length > 200) flush();
+          if (!cur.title) cur.title = text.slice(0, 80);
+          else { flush(); cur.title = text.slice(0, 80); }
+        }
+        cur.parts.push(text);
+      }
+      flush();
+      if (!sections.length) throw new Error('no readable text was found in that document');
+      return sections;
+    }
+
+    async function fb2FileToChapters(file) {
+      let data = await file.arrayBuffer();
+      const head = new Uint8Array(data.slice(0, 2));
+      if (head[0] === 0x50 && head[1] === 0x4b) { // .fb2.zip
+        const zip = await JSZip.loadAsync(data);
+        const inner = Object.values(zip.files).find(f => !f.dir && /\.fb2$/i.test(f.name));
+        if (!inner) throw new Error('no FB2 file was found inside that archive');
+        data = await inner.async('arraybuffer');
+      }
+      const probe = new TextDecoder('utf-8').decode(data.slice(0, 400));
+      const xml = new TextDecoder(/encoding=["']windows-1251/i.test(probe) ? 'windows-1251' : 'utf-8').decode(data);
+      const doc = new DOMParser().parseFromString(xml, 'application/xml');
+      if (doc.querySelector('parsererror')) throw new Error('the FB2 file could not be parsed');
+      const titleEl = doc.getElementsByTagName('book-title')[0];
+      const title = titleEl ? (titleEl.textContent || '').replace(/\s+/g, ' ').trim() : '';
+      const bodyEl = Array.from(doc.getElementsByTagName('body'))[0];
+      if (!bodyEl) throw new Error('the FB2 file has no content');
+      const sections = [];
+      const readSection = (sec) => {
+        const st = Array.from(sec.children).find(c => /^title$/i.test(c.tagName));
+        const secTitle = st ? (st.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80) : '';
+        const own = Array.from(sec.children)
+          .filter(c => /^p$/i.test(c.tagName))
+          .map(p => (p.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean);
+        if (own.length) sections.push({ title: secTitle, text: own.join('\n\n') });
+        Array.from(sec.children).filter(c => /^section$/i.test(c.tagName)).forEach(readSection);
+      };
+      const top = Array.from(bodyEl.children).filter(el => /^section$/i.test(el.tagName));
+      if (top.length) top.forEach(readSection); else readSection(bodyEl);
+      if (!sections.length) throw new Error('no readable text was found in that FB2 file');
+      return { title, sections };
+    }
+
+    let pdfJsPromise = null;
+    function ensurePdfJs() {
+      if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+      if (!pdfJsPromise) {
+        pdfJsPromise = new Promise((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+          s.onload = () => {
+            window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+              'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+            resolve(window.pdfjsLib);
+          };
+          s.onerror = () => {
+            pdfJsPromise = null;
+            reject(new Error('could not load the PDF reader — check your internet connection'));
+          };
+          document.head.appendChild(s);
+        });
+      }
+      return pdfJsPromise;
+    }
+
+    async function pdfFileToChapters(file) {
+      const pdfjs = await ensurePdfJs();
+      diskMsg('Opening the PDF…');
+      const doc = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
+      const lines = [];
+      for (let p = 1; p <= doc.numPages; p++) {
+        const page = await doc.getPage(p);
+        const content = await page.getTextContent();
+        let buf = '';
+        for (const item of content.items) {
+          if (typeof item.str !== 'string') continue;
+          buf += item.str;
+          if (item.hasEOL) { lines.push(buf.replace(/\s+$/, '')); buf = ''; }
+        }
+        if (buf.replace(/\s+$/, '')) lines.push(buf.replace(/\s+$/, ''));
+        lines.push('');
+        if (p % 10 === 0 || p === doc.numPages) {
+          diskMsg('Reading PDF page ' + p + ' of ' + doc.numPages + '…');
+        }
+      }
+      const WORDNUM = '(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty)';
+      const isHeading = l => l.length < 80 && (
+        new RegExp('^(?:chapter|part|book|section)\\s+(?:[\\dIVXLCivxlc]+|' + WORDNUM + ')\\b', 'i').test(l) ||
+        /^(?:prologue|epilogue|introduction|afterword|foreword|forward)\b/i.test(l));
+      const sections = [];
+      let cur = { title: '', parts: [] };
+      const flush = () => {
+        const t = cur.parts.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+        if (t) sections.push({ title: cur.title, text: t });
+        cur = { title: '', parts: [] };
+      };
+      for (const raw of lines) {
+        const l = raw.trim();
+        if (l && isHeading(l)) {
+          if (cur.parts.join('').replace(/\s+/g, '').length > 300) flush();
+          if (!cur.title) cur.title = l.slice(0, 80);
+        }
+        cur.parts.push(raw);
+      }
+      flush();
+      if (!sections.length) throw new Error('no readable text could be extracted (scanned image PDFs are not supported)');
+      return sections;
+    }
+
+    function diskFileTitle(name) {
+      return String(name).replace(/\.[^.]+$/, '').replace(/[_]+/g, ' ')
+        .replace(/\s{2,}/g, ' ').trim() || 'Untitled book';
+    }
+
+    async function diskImportFile(file) {
+      const ext = ((String(file.name).match(/\.([^.]+)$/) || [])[1] || '').toLowerCase();
+      let title = '', blob = null, sections = null;
+      if (ext === 'epub') {
+        blob = file;
+        title = diskFileTitle(file.name);
+      } else if (ext === 'pdf') {
+        title = diskFileTitle(file.name);
+        sections = await pdfFileToChapters(file);
+      } else if (ext === 'txt' || ext === 'text') {
+        title = diskFileTitle(file.name);
+        sections = textFileToChapters(await file.text(), false);
+      } else if (ext === 'md' || ext === 'markdown') {
+        title = diskFileTitle(file.name);
+        sections = textFileToChapters(await file.text(), true);
+      } else if (ext === 'html' || ext === 'htm') {
+        const r = htmlFileToChapters(await file.text());
+        title = r.title || diskFileTitle(file.name);
+        sections = r.sections;
+      } else if (ext === 'docx') {
+        title = diskFileTitle(file.name);
+        sections = await docxFileToChapters(file);
+      } else if (ext === 'fb2') {
+        const r = await fb2FileToChapters(file);
+        title = r.title || diskFileTitle(file.name);
+        sections = r.sections;
+      } else {
+        throw new Error('"' + ext + '" files are not supported yet — use EPUB, PDF, TXT, Markdown, HTML, DOCX or FB2.');
+      }
+      const finalTitle = String(title || 'Untitled book').slice(0, 120);
+      // Re-uploading the same book replaces the old record instead of duplicating it.
+      let rec = uploadBooks.find(u => u.title === finalTitle);
+      const key = rec ? rec.key
+        : 'upload:' + (window.crypto && crypto.randomUUID ? crypto.randomUUID().slice(0, 8) : Date.now().toString(36));
+      if (!blob) blob = await buildEpubBlob(finalTitle, sections);
+      rec = { key, title: finalTitle, blob, added: Date.now() };
+      try { await uploadsPut(rec); } catch (error) { console.warn('Could not remember this upload.', error); }
+      const idx = uploadBooks.findIndex(u => u.key === key);
+      if (idx >= 0) uploadBooks[idx] = rec; else uploadBooks.unshift(rec);
+      buildLibrary();
+      return rec;
+    }
+
+    async function diskHandleFiles(files) {
+      for (const file of files) {
+        try {
+          diskMsg('Reading “' + file.name + '”…');
+          const rec = await diskImportFile(file);
+          diskMsg('Loaded “' + rec.title + '”.');
+          await openBookMeta({ title: rec.title, file: rec.blob, key: rec.key });
+        } catch (error) {
+          console.error('Could not open ' + file.name, error);
+          diskMsg('Could not open “' + file.name + '”: ' + error.message);
+        }
+      }
+    }
+
+    (function wireDiskImport() {
+      document.getElementById('disk-import-btn').addEventListener('click', () => diskInput.click());
+      diskInput.addEventListener('change', () => {
+        const files = Array.from(diskInput.files || []);
+        diskInput.value = '';
+        if (files.length) diskHandleFiles(files);
+      });
+    })();
+
     initializePasscodeGate();
     initializeReaderSettings();
     bookSearch.addEventListener('input', buildLibrary);
     initializeCoverFolderPicker();
-    loadRepoCoverManifest().then(buildLibrary);
+    loadRepoCoverManifest().then(loadUploadBooks).then(buildLibrary).catch(buildLibrary);
   </script>
 </body>
 </html>

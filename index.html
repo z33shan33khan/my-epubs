@@ -975,6 +975,7 @@
           <select id="speech-highlight-mode">
             <option value="word">Word</option>
             <option value="line">Line (to next period)</option>
+            <option value="sentence">Entire sentence / line</option>
             <option value="paragraph">Paragraph</option>
           </select>
         </label>
@@ -1137,6 +1138,12 @@
     let speechFallbackChunk = null, speechFallbackRunId = 0, speechPausedAt = 0;
     let speechLastBoundaryAt = 0;
     let googleSpeechAudio = null, googleSpeechQueue = [];
+    let googleHighlightTimer = null;
+    let googleHighlightChunk = null, googleHighlightRanges = [], googleHighlightPiece = 0;
+    let googleHighlightChar = 0, googleHighlightAt = 0, googlePieceWallAt = 0;
+    let googleMsPerChar = 0; // Google-only speed, rate-normalised, learned per piece
+    let speechEstChar = 0, speechEstAt = 0; // word estimator progress (rate-adaptive)
+    let speechRebuildBusy = false;
     let speechWatchdogTimer = null;
     let activeSpeechUtterance = null;
     let speechHiddenPause = false;
@@ -1673,7 +1680,15 @@
          (or leaving the book) ends a run. */
       rendition.on('relocated', () => {
         if (!speechActive || speechHiddenPause) return;
-        if (isSpeechOwnMove()) return; // the voice moved the view itself
+        if (isSpeechOwnMove()) {
+          /* The voice moved the view itself: epub.js re-rendered the page, so
+             the chunks must be rebuilt against the new document or every
+             following highlight would paint into the old, detached one. */
+          setTimeout(() => {
+            if (speechActive && !speechHiddenPause) rebuildSpeechChunksInPlace();
+          }, 60);
+          return;
+        }
         // Defer a tick so any display() the restart triggers happens outside
         // epub.js's own relocated event, and re-check that the move was not
         // the reader's own after all.
@@ -2740,22 +2755,31 @@
 
     /* Android Chrome normally sends no word-boundary events, so estimate the
        word being spoken from elapsed time so the highlight keeps moving there. */
-    function startSpeechFallbackTimer(chunk, runId) {
+    function startSpeechFallbackTimer(chunk, runId, keepProgress) {
       stopSpeechFallbackTimer();
       speechFallbackChunk = chunk;
       speechFallbackRunId = runId;
-      const rate = Math.max(0.5, currentSpeechRate) || 1;
-      /* Estimate 15% slower than the calibrated speed so the highlight trails
-         the voice slightly instead of running ahead of it on mobile. */
-      const perChar = ((speechMsPerCharBase > 15 ? speechMsPerCharBase : 62) / rate) * 1.15;
-      const startedAt = speechChunkSpokenAt || performance.now();
+      if (!keepProgress) speechEstChar = 0;
+      speechEstAt = performance.now();
       speechFallbackTimer = setInterval(() => {
         if (runId !== speechRunId || !speechActive) { stopSpeechFallbackTimer(); return; }
+        const now = performance.now();
         /* Fresh word-boundary events own the highlight; estimate from elapsed
            time only when they go stale (desktop Chrome fires them sparsely
            and Google Translate audio never sends any). */
-        if (performance.now() - speechLastBoundaryAt < 900) return;
-        const charIndex = Math.floor((performance.now() - startedAt) / perChar);
+        if (now - speechLastBoundaryAt < 900) { speechEstAt = now; return; }
+        /* Progress is accumulated instead of derived from a fixed start time,
+           and the speed is re-read on every tick — so raising or lowering the
+           speech speed takes effect on the very next tick rather than at the
+           next chunk, and the highlight never jumps back to the start. */
+        const rate = Math.max(0.5, currentSpeechRate) || 1;
+        const base = speechMsPerCharBase > 15 ? speechMsPerCharBase : 62;
+        /* Estimate 15% slower than the calibrated speed so the highlight trails
+           the voice slightly instead of running ahead of it on mobile. */
+        const perChar = (base / rate) * 1.15;
+        speechEstChar += (now - speechEstAt) / perChar;
+        speechEstAt = now;
+        const charIndex = Math.floor(speechEstChar);
         if (charIndex < chunk.text.length) highlightSpeechWord(chunk, charIndex);
       }, 120);
     }
@@ -2773,7 +2797,7 @@
       if (!speechFallbackChunk || !speechPausedAt) return;
       speechChunkSpokenAt += performance.now() - speechPausedAt;
       speechPausedAt = 0;
-      startSpeechFallbackTimer(speechFallbackChunk, speechFallbackRunId);
+      startSpeechFallbackTimer(speechFallbackChunk, speechFallbackRunId, true);
     }
 
     function stopSpeechFallbackTimer() {
@@ -2822,6 +2846,7 @@
       speechPausedAt = 0;
       stopSpeechKeepAlive();
       stopSpeechFallbackTimer();
+      stopGoogleHighlight();
       clearTimeout(speechWatchdogTimer);
       stopGoogleSpeech();
       speechRunId += 1; /* invalidate pending onend/onerror callbacks */
@@ -2876,11 +2901,59 @@
       } catch (error) { /* the view is gone — nothing to clear */ }
     }
 
-    function highlightSpeechWord(chunk, charIndex) {
+    /* epub.js swaps in a new Contents object whenever it re-renders the page
+       (the voice's own page move, a theme change, a resize). Chunks built
+       against the previous view then paint into a detached document, so the
+       highlight silently vanishes while the voice keeps talking. Rebuild the
+       chunks against the live view and carry the reading position across. */
+    function rebuildSpeechChunksInPlace() {
+      if (!rendition || speechRebuildBusy) return null;
+      speechRebuildBusy = true;
+      try {
+        const oldChunk = speechChunks[speechChunkIndex];
+        const oldChar = activeSpeechCharIndex;
+        let segments = null;
+        try { segments = collectSpeechSegments(); } catch (error) { segments = null; }
+        if (!segments || !segments.length) return null;
+        let chunks = null;
+        try { chunks = makeSpeechChunks(segments); } catch (error) { return null; }
+        if (!chunks.length) return null;
+        let idx = -1;
+        if (oldChunk) idx = chunks.findIndex(item => item.text === oldChunk.text);
+        if (idx < 0 && oldChunk && oldChunk.cfi) {
+          try {
+            const cfi = new ePub.CFI();
+            idx = chunks.findIndex(item => cfi.compare(item.cfi, oldChunk.cfi) >= 0);
+          } catch (error) { idx = -1; }
+        }
+        if (idx < 0) idx = Math.min(speechChunkIndex, chunks.length - 1);
+        const newChunk = chunks[idx];
+        const charIndex = Math.max(0, Math.min(newChunk.text.length - 1, Number(oldChar) || 0));
+        speechChunks = chunks;
+        speechChunkIndex = idx;
+        /* The voice asked for this spot — do not immediately display() it again. */
+        displayedSpeechCfi = newChunk.cfi;
+        if (speechFallbackChunk === oldChunk) speechFallbackChunk = newChunk;
+        if (googleHighlightChunk === oldChunk) googleHighlightChunk = newChunk;
+        activeSpeechCharIndex = charIndex;
+        return { chunk: newChunk, charIndex };
+      } finally {
+        speechRebuildBusy = false;
+      }
+    }
+
+    function highlightSpeechWord(chunk, charIndex, rebuilt) {
       const content = chunk && chunk.segment && chunk.segment.content;
       const doc = content && content.document;
       const view = doc && doc.defaultView;
-      if (!view) return; // the chapter/page changed and the view was destroyed
+      if (!view) {
+        /* The view was re-rendered under us — rebuild against the live one
+           and repaint there, once, instead of painting into a dead document. */
+        if (rebuilt) return;
+        const fixed = rebuildSpeechChunksInPlace();
+        if (fixed && fixed.chunk) highlightSpeechWord(fixed.chunk, fixed.charIndex, true);
+        return;
+      }
       const currentCharIndex = Math.max(0, Math.min(chunk.text.length - 1, Number(charIndex) || 0));
       activeSpeechChunk = chunk;
       activeSpeechCharIndex = currentCharIndex;
@@ -2889,7 +2962,11 @@
 
       clearSpeechRangeHighlights(chunk.segment.content);
       const useOverlays = useSpeechRangeOverlays(chunk.segment.content);
-      if (speechHighlightMode.value === 'line') {
+      /* 'line' shows the whole line plus the word being spoken; 'sentence'
+         shows the entire sentence/line on its own, as one solid block, and
+         deliberately leaves out the moving word. */
+      const mode = speechHighlightMode.value;
+      if (mode === 'line' || mode === 'sentence') {
         const lineRange = getSpeechLineRange(chunk.segment, chunk.start + currentCharIndex);
         if (lineRange) {
           if (useOverlays) drawSpeechRangeOverlay(chunk.segment.content, lineRange, speechLineColor.value, 'line');
@@ -2898,8 +2975,10 @@
       }
       const wordRange = getSpeechWordRange(chunk, currentCharIndex);
       if (wordRange) {
-        if (useOverlays) drawSpeechRangeOverlay(chunk.segment.content, wordRange, speechWordColor.value, 'word');
-        else view.CSS.highlights.set('my-epubs-speech-word', new view.Highlight(wordRange));
+        if (mode !== 'sentence') {
+          if (useOverlays) drawSpeechRangeOverlay(chunk.segment.content, wordRange, speechWordColor.value, 'word');
+          else view.CSS.highlights.set('my-epubs-speech-word', new view.Highlight(wordRange));
+        }
         keepSpeechRangeVisible(chunk.segment.content, wordRange);
       }
     }
@@ -3061,8 +3140,104 @@
     /* Speak one chunk through Google Translate TTS: the chunk's pieces play
        back to back, the word estimator follows the audio (Google sends no
        boundary events), and a failure falls back to the system voice. */
+    /* The Google voice streams audio but never sends word-boundary events, so
+       the word highlight is driven straight from the audio clock instead of
+       an elapsed-time guess: each piece of the chunk owns its own slice of the
+       text, and the position inside that slice follows currentTime. The
+       highlight therefore cannot drift away from the voice — it is re-anchored
+       at every piece boundary and corrected by the media clock ~11x a second.
+       currentTime counts media time, so the mapping is independent of the
+       playback-rate setting and of any network delay between pieces. */
+    function googleChunkRanges(text, pieces) {
+      const ranges = [];
+      let from = 0;
+      pieces.forEach(piece => {
+        const start = text.indexOf(piece, from);
+        if (start < 0) return;
+        ranges.push({ start, end: start + piece.length });
+        from = start + piece.length;
+      });
+      return ranges;
+    }
+
+    function stopGoogleHighlight() {
+      if (googleHighlightTimer) {
+        clearInterval(googleHighlightTimer);
+        googleHighlightTimer = null;
+      }
+      googleHighlightChunk = null;
+      googleHighlightRanges = [];
+      googleHighlightPiece = 0;
+    }
+
+    function paintGoogleHighlight() {
+      const chunk = googleHighlightChunk;
+      const range = googleHighlightRanges[googleHighlightPiece];
+      if (!chunk || !range) return;
+      const charIndex = Math.max(0, Math.min(chunk.text.length - 1, Math.floor(googleHighlightChar)));
+      highlightSpeechWord(chunk, charIndex);
+    }
+
+    /* translate_tts responses carry no duration, so Chrome reports Infinity
+       and currentTime/duration is useless. Step forward from the last tick at
+       the CURRENT speed instead: a speed change is picked up on the next tick,
+       the position is preserved, and the piece boundary re-anchors the
+       highlight exactly every ~200 characters. */
+    function tickGoogleHighlight() {
+      const chunk = googleHighlightChunk;
+      const range = googleHighlightRanges[googleHighlightPiece];
+      if (!chunk || !range) { stopGoogleHighlight(); return; }
+      const now = performance.now();
+      const audio = googleSpeechAudio;
+      if (audio && isFinite(audio.duration) && audio.duration > 0) {
+        const fraction = Math.min(1, Math.max(0, audio.currentTime / audio.duration));
+        googleHighlightChar = range.start + fraction * (range.end - range.start);
+      } else {
+        const rate = Math.max(0.5, currentSpeechRate) || 1;
+        const base = googleMsPerChar > 15 ? googleMsPerChar
+          : (speechMsPerCharBase > 15 ? speechMsPerCharBase : 62);
+        /* The voice plays at rate × 1.1 (Read Aloud's Google rateAdjust), so
+           wall-clock milliseconds per character shrink by that factor. */
+        const perChar = base / (rate * 1.1);
+        googleHighlightChar += (now - googleHighlightAt) / perChar;
+        if (googleHighlightChar > range.end) googleHighlightChar = range.end;
+      }
+      googleHighlightAt = now;
+      paintGoogleHighlight();
+    }
+
+    function startGoogleHighlight(chunk, ranges) {
+      stopGoogleHighlight();
+      googleHighlightChunk = chunk;
+      googleHighlightRanges = ranges;
+      googleHighlightPiece = 0;
+      const range = ranges[0];
+      googleHighlightChar = range ? range.start : 0;
+      googleHighlightAt = performance.now();
+      googlePieceWallAt = performance.now();
+      paintGoogleHighlight();
+      googleHighlightTimer = setInterval(tickGoogleHighlight, 90);
+    }
+
+    /* A piece has just finished: snap the highlight to its exact end and learn
+       how fast this voice really speaks, so the next pieces track better. */
+    function finishGooglePiece() {
+      const range = googleHighlightRanges[googleHighlightPiece];
+      if (!range) return;
+      googleHighlightChar = range.end;
+      const chars = range.end - range.start;
+      const wall = performance.now() - googlePieceWallAt;
+      if (chars > 10 && wall > 400) {
+        const rate = Math.max(0.5, currentSpeechRate) || 1;
+        const observed = wall / chars * rate * 1.1; // content ms/char at 1×
+        googleMsPerChar = googleMsPerChar ? googleMsPerChar * 0.7 + observed * 0.3 : observed;
+      }
+      paintGoogleHighlight();
+    }
+
     async function speakGoogleChunk(chunk, runId) {
       const pieces = googleSplitText(chunk.text);
+      const ranges = googleChunkRanges(chunk.text, pieces);
       let queued = null;
       const qi = googleSpeechQueue.findIndex(item => item.text === chunk.text);
       if (qi >= 0) {
@@ -3073,6 +3248,7 @@
       const fail = reason => {
         if (runId !== speechRunId) return;
         stopGoogleSpeech();
+        stopGoogleHighlight();
         speechVoice.value = '';
         speechStatus.textContent = 'Google Translate voice failed (' + reason + ') — switched to the system voice.';
         speakNextChunk(runId);
@@ -3082,13 +3258,18 @@
         if (runId !== speechRunId || !speechActive) return;
         if (index >= pieces.length) {
           stopSpeechFallbackTimer();
-          calibrateSpeechSpeed(chunk, performance.now() - speechChunkSpokenAt);
+          stopGoogleHighlight();
           prefetchGoogleChunk();
           speechChunkIndex += 1;
           speakNextChunk(runId);
           return;
         }
         const audio = (index === 0 && queued) ? queued : new Audio(googleTtsUrl(pieces[index]));
+        googleHighlightPiece = index;
+        const pieceRange = ranges[index];
+        googleHighlightChar = pieceRange ? pieceRange.start : googleHighlightChar;
+        googleHighlightAt = performance.now();
+        googlePieceWallAt = performance.now();
         index += 1;
         /* Read Aloud's Google engine plays at rate × rateAdjust(1.1) — Google's
            default pace sits ~10% slow, so the setting matches the other voices. */
@@ -3096,6 +3277,7 @@
         googleSpeechAudio = audio;
         audio.onended = () => {
           if (googleSpeechAudio !== audio) return;
+          finishGooglePiece();
           googleSpeechAudio = null;
           playNext();
         };
@@ -3107,12 +3289,18 @@
         };
         audio.play().then(() => {
           if (runId !== speechRunId) return;
-          if (index === 1) {
-            /* Re-anchor the estimator to the real audio start — the network
-               delay before playback is why the highlight drifted from the voice. */
+          /* Start the clock only once the audio really plays — the network
+             delay before playback must not count as speaking time. */
+          const range = ranges[googleHighlightPiece];
+          googleHighlightChar = range ? range.start : googleHighlightChar;
+          googleHighlightAt = performance.now();
+          googlePieceWallAt = performance.now();
+          if (googleHighlightPiece === 0) {
             speechChunkSpokenAt = performance.now();
             speechLastBoundaryAt = 0;
-            startSpeechFallbackTimer(chunk, runId);
+            startGoogleHighlight(chunk, ranges);
+          } else {
+            paintGoogleHighlight();
           }
         }).catch(() => fail('playback was blocked'));
       };
@@ -3171,6 +3359,9 @@
         /* Keep the estimator running but quiet for 900ms — fresh boundary
            events are the source of truth while they keep arriving. */
         speechLastBoundaryAt = performance.now();
+        /* Re-align the estimator's progress with the real position so it does
+           not resume from a stale offset once the boundaries go quiet. */
+        speechEstChar = event.charIndex;
         highlightSpeechWord(chunk, event.charIndex);
       };
       utterance.onend = () => {
@@ -3243,6 +3434,14 @@
       currentSpeechRate = rate;
       speechRateLabel.textContent = formatSpeechRate(rate) + '×';
       saveReaderPreference('speechRate', rate);
+      /* The Google voice is one streaming audio element — push the new speed
+         to it straight away so the voice and the highlight that follows its
+         clock change together instead of at the next chunk. */
+      if (googleSpeechAudio) {
+        try {
+          googleSpeechAudio.playbackRate = Math.min(3, Math.max(0.5, rate)) * 1.1;
+        } catch (error) { /* the element may be between pieces */ }
+      }
     }
 
     function toggleSpeechPause() {
@@ -3274,6 +3473,7 @@
       speechPausedAt = 0;
       stopSpeechKeepAlive();
       stopSpeechFallbackTimer();
+      stopGoogleHighlight();
       stopGoogleSpeech();
       clearTimeout(speechWatchdogTimer);
       releaseSpeechWakeLock();

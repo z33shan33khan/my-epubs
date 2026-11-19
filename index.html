@@ -3,6 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- Google rejects translate_tts requests that carry a foreign Referer (HTTP 404);
+       this page-level policy is what lets the Google Translate voice play. -->
+  <meta name="referrer" content="no-referrer">
   <title>My EPUB Collection</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23f5f5f7'/%3E%3Cpath d='M32 20c-7-5-15-5-22-2v28c7-3 15-3 22 2 7-5 15-5 22-2V18c-7-3-15-3-22 2Z' fill='%23fff' stroke='%230071e3' stroke-width='3' stroke-linejoin='round'/%3E%3Cpath d='M32 20v28M16 26c4-1 8 0 11 2M16 34c4-1 8 0 11 2m10-8c3-2 7-3 11-2m-11 10c3-2 7-3 11-2' fill='none' stroke='%230071e3' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -1131,6 +1134,9 @@
     let speechMsPerCharBase = 0;
     let speechFallbackTimer = null;
     let speechChunkSpokenAt = 0;
+    let speechFallbackChunk = null, speechFallbackRunId = 0, speechPausedAt = 0;
+    let speechLastBoundaryAt = 0;
+    let googleSpeechAudio = null, googleSpeechQueue = [];
     let speechWatchdogTimer = null;
     let activeSpeechUtterance = null;
     let speechHiddenPause = false;
@@ -1148,6 +1154,7 @@
     let speechNavCfi = null;
     let speechNavIndex = -1;
     let speechNavPending = 0; // when the voice last initiated a display()
+    let speechDisplayBusy = false; // while the voice's own display() is in flight
     let navLockAt = 0;
     const READER_THEME_COLORS = {
       light: { background: '#ffffff', text: '#1d1d1f' },
@@ -2170,6 +2177,57 @@
         || null;
     }
 
+    /* Real Google Translate English TTS — the same network voice the Read
+       Aloud extension uses, streamed through Google's public translate_tts
+       endpoint. The page's no-referrer policy makes Google accept it (a
+       foreign Referer is rejected with HTTP 404). */
+    function isGoogleTranslateSelected() {
+      return speechVoice.value === 'google-translate-en';
+    }
+
+    /* translate_tts accepts at most 200 characters per request; split longer
+       text at word boundaries and play the pieces back to back. */
+    function googleSplitText(text, limit = 200) {
+      const pieces = [];
+      let rest = String(text || '');
+      while (rest.length > limit) {
+        let cut = rest.lastIndexOf(' ', limit);
+        if (cut < Math.floor(limit * 0.6)) cut = limit;
+        pieces.push(rest.slice(0, cut));
+        rest = rest.slice(cut).replace(/^\s+/, '');
+      }
+      if (rest) pieces.push(rest);
+      return pieces;
+    }
+
+    function googleTtsUrl(text) {
+      return 'https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&q=' + encodeURIComponent(text) + '&tl=en';
+    }
+
+    function stopGoogleSpeech() {
+      if (googleSpeechAudio) {
+        const audio = googleSpeechAudio;
+        googleSpeechAudio = null;
+        try { audio.pause(); } catch (error) {}
+        try { audio.removeAttribute('src'); } catch (error) {}
+      }
+      googleSpeechQueue = [];
+    }
+
+    /* Buffer the next chunk while the current one plays so a slow response
+       never leaves a silent gap between chunks. */
+    function prefetchGoogleChunk() {
+      try {
+        if (!isGoogleTranslateSelected() || googleSpeechQueue.length >= 1) return;
+        const next = speechChunks[speechChunkIndex + 1];
+        if (!next || !next.text) return;
+        if (googleSpeechQueue.some(item => item.text === next.text)) return;
+        const audio = new Audio(googleTtsUrl(googleSplitText(next.text)[0]));
+        audio.preload = 'auto';
+        googleSpeechQueue.push({ text: next.text, audio });
+      } catch (error) {}
+    }
+
     function getSpeechTextMap(element) {
       const document = element.ownerDocument;
       const walker = document.createTreeWalker(element, 4);
@@ -2392,7 +2450,8 @@
     }
 
     function makeSpeechChunks(segments, startAt = null) {
-      const maxLength = 220;
+      /* Google translate_tts accepts at most 200 characters per request. */
+      const maxLength = speechVoice.value === 'google-translate-en' ? 200 : 220;
       const chunks = [];
       let foundStart = !startAt;
       segments.forEach(segment => {
@@ -2683,6 +2742,8 @@
        word being spoken from elapsed time so the highlight keeps moving there. */
     function startSpeechFallbackTimer(chunk, runId) {
       stopSpeechFallbackTimer();
+      speechFallbackChunk = chunk;
+      speechFallbackRunId = runId;
       const rate = Math.max(0.5, currentSpeechRate) || 1;
       /* Estimate 15% slower than the calibrated speed so the highlight trails
          the voice slightly instead of running ahead of it on mobile. */
@@ -2690,9 +2751,29 @@
       const startedAt = speechChunkSpokenAt || performance.now();
       speechFallbackTimer = setInterval(() => {
         if (runId !== speechRunId || !speechActive) { stopSpeechFallbackTimer(); return; }
+        /* Fresh word-boundary events own the highlight; estimate from elapsed
+           time only when they go stale (desktop Chrome fires them sparsely
+           and Google Translate audio never sends any). */
+        if (performance.now() - speechLastBoundaryAt < 900) return;
         const charIndex = Math.floor((performance.now() - startedAt) / perChar);
         if (charIndex < chunk.text.length) highlightSpeechWord(chunk, charIndex);
       }, 120);
+    }
+
+    /* Freeze the estimator while the reader is paused and shift its anchor by
+       the paused time on resume so the highlight picks up where it left off. */
+    function pauseSpeechEstimate() {
+      if (speechFallbackTimer) {
+        stopSpeechFallbackTimer();
+        speechPausedAt = performance.now();
+      }
+    }
+
+    function resumeSpeechEstimate() {
+      if (!speechFallbackChunk || !speechPausedAt) return;
+      speechChunkSpokenAt += performance.now() - speechPausedAt;
+      speechPausedAt = 0;
+      startSpeechFallbackTimer(speechFallbackChunk, speechFallbackRunId);
     }
 
     function stopSpeechFallbackTimer() {
@@ -2738,9 +2819,11 @@
       if (!speechActive || speechHiddenPause) return;
       speechHiddenPause = true;
       speechResumeChunkIndex = speechChunkIndex;
+      speechPausedAt = 0;
       stopSpeechKeepAlive();
       stopSpeechFallbackTimer();
       clearTimeout(speechWatchdogTimer);
+      stopGoogleSpeech();
       speechRunId += 1; /* invalidate pending onend/onerror callbacks */
       window.speechSynthesis.cancel();
       clearSpeechHighlight();
@@ -2873,17 +2956,23 @@
         ' · Chapter progress ' + chapterProgress + '%';
     }
 
-    /* True when the current relocation is one the read-aloud voice asked for:
-       it matches the CFI/section the voice last requested while that request is
-       still in flight. A real user jump lands elsewhere, so the relocated
-       handler restarts the run at the reader's new spot. */
+    /* True when the current relocation is one the read-aloud voice asked for.
+       A display() the voice initiated is identified directly, while its
+       request is still in flight (speechDisplayBusy). After it completes, only
+       an exact match on the requested CFI — or, for a chapter move where no
+       CFI was requested, on the section index — counts as the voice's own move.
+       A user page turn inside the same section has a different CFI, so it no
+       longer hides behind the section-index match and the run restarts at the
+       reader's new spot. */
     function isSpeechOwnMove() {
-      if (!rendition || !speechNavPending) return false;
+      if (!rendition) return false;
+      if (speechDisplayBusy) return true;
+      if (!speechNavPending) return false;
       if (performance.now() - speechNavPending >= 2500) return false;
       const location = rendition.currentLocation();
       const start = location && location.start;
       if (!start) return false;
-      if (speechNavCfi && start.cfi === speechNavCfi) return true;
+      if (speechNavCfi) return start.cfi === speechNavCfi;
       return Number(start.index) === speechNavIndex;
     }
 
@@ -2939,10 +3028,12 @@
       for (let index = currentIndex + 1; index < spineItems.length; index += 1) {
         if (runId !== speechRunId || !speechActive) return;
         try {
-          speechNavIndex = index; // the reader's own chapter move
+          speechNavIndex = index; // the voice's own chapter move
           speechNavCfi = null;
           speechNavPending = performance.now();
-          await rendition.display(spineItems[index].href);
+          speechDisplayBusy = true;
+          try { await rendition.display(spineItems[index].href); }
+          finally { setTimeout(() => { speechDisplayBusy = false; }, 150); }
         } catch (error) {
           if (runId !== speechRunId) return;
           speechActive = false;
@@ -2967,6 +3058,67 @@
       speechStatus.textContent = 'Finished reading "' + currentBookTitle + '" from beginning to end.';
     }
 
+    /* Speak one chunk through Google Translate TTS: the chunk's pieces play
+       back to back, the word estimator follows the audio (Google sends no
+       boundary events), and a failure falls back to the system voice. */
+    async function speakGoogleChunk(chunk, runId) {
+      const pieces = googleSplitText(chunk.text);
+      let queued = null;
+      const qi = googleSpeechQueue.findIndex(item => item.text === chunk.text);
+      if (qi >= 0) {
+        const item = googleSpeechQueue[qi];
+        googleSpeechQueue.splice(qi, 1);
+        if (!item.audio.error) queued = item.audio;
+      }
+      const fail = reason => {
+        if (runId !== speechRunId) return;
+        stopGoogleSpeech();
+        speechVoice.value = '';
+        speechStatus.textContent = 'Google Translate voice failed (' + reason + ') — switched to the system voice.';
+        speakNextChunk(runId);
+      };
+      let index = 0;
+      const playNext = () => {
+        if (runId !== speechRunId || !speechActive) return;
+        if (index >= pieces.length) {
+          stopSpeechFallbackTimer();
+          calibrateSpeechSpeed(chunk, performance.now() - speechChunkSpokenAt);
+          prefetchGoogleChunk();
+          speechChunkIndex += 1;
+          speakNextChunk(runId);
+          return;
+        }
+        const audio = (index === 0 && queued) ? queued : new Audio(googleTtsUrl(pieces[index]));
+        index += 1;
+        /* Read Aloud's Google engine plays at rate × rateAdjust(1.1) — Google's
+           default pace sits ~10% slow, so the setting matches the other voices. */
+        audio.playbackRate = Math.min(3, Math.max(0.5, currentSpeechRate)) * 1.1;
+        googleSpeechAudio = audio;
+        audio.onended = () => {
+          if (googleSpeechAudio !== audio) return;
+          googleSpeechAudio = null;
+          playNext();
+        };
+        audio.onerror = () => {
+          if (googleSpeechAudio !== audio) return;
+          const err = audio.error;
+          googleSpeechAudio = null;
+          fail(err ? 'error ' + err.code : 'network error');
+        };
+        audio.play().then(() => {
+          if (runId !== speechRunId) return;
+          if (index === 1) {
+            /* Re-anchor the estimator to the real audio start — the network
+               delay before playback is why the highlight drifted from the voice. */
+            speechChunkSpokenAt = performance.now();
+            speechLastBoundaryAt = 0;
+            startSpeechFallbackTimer(chunk, runId);
+          }
+        }).catch(() => fail('playback was blocked'));
+      };
+      playNext();
+    }
+
     async function speakNextChunk(runId) {
       if (runId !== speechRunId || !speechActive) return;
       if (speechChunkIndex >= speechChunks.length) {
@@ -2977,9 +3129,11 @@
       const chunk = speechChunks[speechChunkIndex];
       try {
         if (displayedSpeechCfi !== chunk.cfi && !isSpeechChunkNearViewport(chunk)) {
-          speechNavCfi = chunk.cfi; // the reader's own move — not a user page turn
+          speechNavCfi = chunk.cfi; // the voice's own move — not a user page turn
           speechNavPending = performance.now();
-          await rendition.display(chunk.cfi);
+          speechDisplayBusy = true;
+          try { await rendition.display(chunk.cfi); }
+          finally { setTimeout(() => { speechDisplayBusy = false; }, 150); }
           if (runId !== speechRunId || !speechActive) return;
           displayedSpeechCfi = chunk.cfi;
           updateReaderProgress();
@@ -2998,7 +3152,9 @@
       clearSpeechRangeHighlights(chunk.segment.content);
       highlightSpeechSegment(chunk.segment);
       highlightSpeechWord(chunk, 0);
+      speechLastBoundaryAt = 0;
       updateSpeechProgress();
+      if (isGoogleTranslateSelected()) { speakGoogleChunk(chunk, runId); return; }
       const utterance = new SpeechSynthesisUtterance(chunk.text);
       utterance.rate = currentSpeechRate;
       // The run's voice is resolved once (locked) and reused for every chunk,
@@ -3012,7 +3168,9 @@
       }
       utterance.onboundary = event => {
         if (runId !== speechRunId || event.name !== 'word') return;
-        stopSpeechFallbackTimer();
+        /* Keep the estimator running but quiet for 900ms — fresh boundary
+           events are the source of truth while they keep arriving. */
+        speechLastBoundaryAt = performance.now();
         highlightSpeechWord(chunk, event.charIndex);
       };
       utterance.onend = () => {
@@ -3089,14 +3247,19 @@
 
     function toggleSpeechPause() {
       if (!speechSupported || !speechActive) return;
-      if (window.speechSynthesis.paused) {
-        window.speechSynthesis.resume();
-        speechPauseBtn.textContent = 'Pause';
-        speechStatus.textContent = 'Read aloud resumed.';
-      } else {
-        window.speechSynthesis.pause();
+      const isPaused = googleSpeechAudio ? googleSpeechAudio.paused : window.speechSynthesis.paused;
+      if (!isPaused) {
+        if (googleSpeechAudio) { try { googleSpeechAudio.pause(); } catch (error) {} }
+        else window.speechSynthesis.pause();
         speechPauseBtn.textContent = 'Resume';
         speechStatus.textContent = 'Read aloud paused.';
+        pauseSpeechEstimate();
+      } else {
+        if (googleSpeechAudio) { try { googleSpeechAudio.play(); } catch (error) {} }
+        else window.speechSynthesis.resume();
+        speechPauseBtn.textContent = 'Pause';
+        speechStatus.textContent = 'Read aloud resumed.';
+        resumeSpeechEstimate();
       }
     }
 
@@ -3108,8 +3271,10 @@
       speechHiddenPause = false;
       speechResumeChunkIndex = null;
       lockedSpeechVoice = null;
+      speechPausedAt = 0;
       stopSpeechKeepAlive();
       stopSpeechFallbackTimer();
+      stopGoogleSpeech();
       clearTimeout(speechWatchdogTimer);
       releaseSpeechWakeLock();
       if (speechSupported) window.speechSynthesis.cancel();
